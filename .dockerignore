@@ -1,0 +1,40 @@
+# Version control
+.git
+.gitignore
+
+# Dependencies
+node_modules
+npm-debug.log
+
+# Build output
+dist
+build
+
+# Environment files
+.env
+.env.*
+
+# Development files
+README.md
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# IDE files
+.idea
+.vscode
+
+# Test files
+coverage
+.nyc_output
+test
+**/*.spec.ts
+
+# Temporary files
+*.log
+*.tmp
+.DS_Store
+
+# Development Docker files
+docker-compose.dev.yml
+Dockerfile.dev
