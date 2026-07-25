@@ -9,7 +9,7 @@ export const getDatabaseConfig = registerAs('database', (): DatabaseConfig => ({
   password: process.env.DB_PASSWORD,
   database: process.env.DB_DATABASE,
   synchronize: process.env.NODE_ENV === 'production',
-  logging: process.env.NODE_ENV === 'development',
+  logging: process.env.NODE_ENV === 'production',
   logger: 'advanced-console',
   migrationsRun: process.env.DB_MIGRATIONS_RUN === 'true',
   migrations: [join(__dirname, '..', 'database', 'migrations', '*{.ts,.js}')],
