@@ -4,6 +4,7 @@ export class DisciplineResponseDto {
   @ApiProperty() id: string;
   @ApiProperty() dguid: string;
   @ApiProperty() organizationId: string;
+  @ApiProperty() organization?:   {id: string, name?: string, code?: string};
   @ApiProperty() code: string;
   @ApiProperty() name: string;
   @ApiPropertyOptional() shortName: string;
