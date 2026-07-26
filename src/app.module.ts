@@ -21,6 +21,10 @@ import { SubscriptionPlanModule } from './modules/subscription-plan/subscription
 import { OrganizationSubscriptionModule } from './modules/organization-subscription/organization-subscription.module';
 import { PaymentModule } from './modules/payment/payment.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { DepartmentModule } from './modules/department/department.module';
+import { DisciplineModule } from './modules/discipline/discipline.module';
+import { DepartmentDisciplineModule } from './modules/department-discipline/department-discipline.module';
+import { ActivityModule } from './modules/activity/activity.module';
 import { SubscriptionEnforcementGuard } from './common/guards/subscription-enforcement.guard';
 import { OrganizationSubscription } from './modules/organization-subscription/entity/organization-subscription.entity';
 import { User } from './modules/user/entity/user.entity';
@@ -52,6 +56,10 @@ import { User } from './modules/user/entity/user.entity';
     OrganizationSubscriptionModule,
     PaymentModule,
     DashboardModule,
+    DepartmentModule,
+    DisciplineModule,
+    DepartmentDisciplineModule,
+    ActivityModule,
   ],
   controllers: [
     UserController,
