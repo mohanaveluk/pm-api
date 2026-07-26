@@ -70,6 +70,9 @@ export class DepartmentService {
 
     const [items, total] = await this.deptRepo.findAndCount({
       where,
+      relations: {
+        organization: true,
+      },      
       order: { [safeSortBy]: sortOrder },
       skip: (page - 1) * limit,
       take: limit,
@@ -155,6 +158,8 @@ export class DepartmentService {
       id:             dept.id,
       dguid:          dept.dguid,
       organizationId: dept.organizationId,
+      organizationName: dept.organization.organizationName,
+      organization:   {id: dept.organizationId, name: dept.organization.organizationName},
       code:           dept.code,
       name:           dept.name,
       shortName:      dept.shortName,
