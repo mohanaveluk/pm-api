@@ -25,6 +25,8 @@ import { DepartmentModule } from './modules/department/department.module';
 import { DisciplineModule } from './modules/discipline/discipline.module';
 import { DepartmentDisciplineModule } from './modules/department-discipline/department-discipline.module';
 import { ActivityModule } from './modules/activity/activity.module';
+import { ServiceGroupModule } from './modules/service-group/service-group.module';
+import { ServiceGroupUserModule } from './modules/service-group-user/service-group-user.module';
 import { SubscriptionEnforcementGuard } from './common/guards/subscription-enforcement.guard';
 import { OrganizationSubscription } from './modules/organization-subscription/entity/organization-subscription.entity';
 import { User } from './modules/user/entity/user.entity';
@@ -60,6 +62,8 @@ import { User } from './modules/user/entity/user.entity';
     DisciplineModule,
     DepartmentDisciplineModule,
     ActivityModule,
+    ServiceGroupModule,
+    ServiceGroupUserModule,
   ],
   controllers: [
     UserController,
