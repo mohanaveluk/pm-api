@@ -133,8 +133,8 @@ export class ServiceGroupUserController {
     @Body() dto: SyncServiceGroupUsersDto,
     @Request() req: any,
   ): Promise<ResponseDto<SyncResultDto>> {
-    const { organizationId, userId } = req.user;
-    const result = await this.service.sync(organizationId, serviceGroupId, dto, userId);
+    const { organizationId, uguid } = req.user;
+    const result = await this.service.sync(organizationId, serviceGroupId, dto, uguid);
     return ResponseDto.success(result, 'Membership synchronized');
   }
 
@@ -201,8 +201,8 @@ export class ServiceGroupUserController {
     @Param('id', ParseUUIDPipe) id: string,
     @Request() req: any,
   ): Promise<ResponseDto<ServiceGroupUserResponseDto>> {
-    const { organizationId, userId } = req.user;
-    const result = await this.service.disable(organizationId, id, userId);
+    const { organizationId, uguid } = req.user;
+    const result = await this.service.disable(organizationId, id, uguid);
     return ResponseDto.updated(result, 'Assignment disabled');
   }
 
@@ -218,8 +218,8 @@ export class ServiceGroupUserController {
     @Param('id', ParseUUIDPipe) id: string,
     @Request() req: any,
   ): Promise<ResponseDto<ServiceGroupUserResponseDto>> {
-    const { organizationId, userId } = req.user;
-    const result = await this.service.enable(organizationId, id, userId);
+    const { organizationId, uguid } = req.user;
+    const result = await this.service.enable(organizationId, id, uguid);
     return ResponseDto.updated(result, 'Assignment enabled');
   }
 
@@ -236,8 +236,8 @@ export class ServiceGroupUserController {
     @Param('id', ParseUUIDPipe) id: string,
     @Request() req: any,
   ): Promise<ResponseDto<null>> {
-    const { organizationId, userId } = req.user;
-    await this.service.remove(organizationId, id, userId);
+    const { organizationId, uguid } = req.user;
+    await this.service.remove(organizationId, id, uguid);
     return ResponseDto.deleted('Assignment removed');
   }
 }
