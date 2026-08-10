@@ -27,6 +27,9 @@ import { DepartmentDisciplineModule } from './modules/department-discipline/depa
 import { ActivityModule } from './modules/activity/activity.module';
 import { ServiceGroupModule } from './modules/service-group/service-group.module';
 import { ServiceGroupUserModule } from './modules/service-group-user/service-group-user.module';
+import { MaterialCategoryModule } from './modules/material-category/material-category.module';
+import { MaterialGroupModule } from './modules/material-group/material-group.module';
+import { UnitOfMeasurementModule } from './modules/unit-of-measurement/unit-of-measurement.module';
 import { SubscriptionEnforcementGuard } from './common/guards/subscription-enforcement.guard';
 import { OrganizationSubscription } from './modules/organization-subscription/entity/organization-subscription.entity';
 import { User } from './modules/user/entity/user.entity';
@@ -64,6 +67,9 @@ import { User } from './modules/user/entity/user.entity';
     ActivityModule,
     ServiceGroupModule,
     ServiceGroupUserModule,
+    MaterialCategoryModule,
+    MaterialGroupModule,
+    UnitOfMeasurementModule,
   ],
   controllers: [
     UserController,
