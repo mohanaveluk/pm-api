@@ -30,6 +30,7 @@ import { ServiceGroupUserModule } from './modules/service-group-user/service-gro
 import { MaterialCategoryModule } from './modules/material-category/material-category.module';
 import { MaterialGroupModule } from './modules/material-group/material-group.module';
 import { UnitOfMeasurementModule } from './modules/unit-of-measurement/unit-of-measurement.module';
+import { MaterialModule } from './modules/material/material.module';
 import { SubscriptionEnforcementGuard } from './common/guards/subscription-enforcement.guard';
 import { OrganizationSubscription } from './modules/organization-subscription/entity/organization-subscription.entity';
 import { User } from './modules/user/entity/user.entity';
@@ -70,6 +71,7 @@ import { User } from './modules/user/entity/user.entity';
     MaterialCategoryModule,
     MaterialGroupModule,
     UnitOfMeasurementModule,
+    MaterialModule,
   ],
   controllers: [
     UserController,
