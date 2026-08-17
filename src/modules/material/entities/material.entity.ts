@@ -71,6 +71,10 @@ export class Material {
   @JoinColumn({ name: 'unitOfMeasurementId' })
   unitOfMeasurement: UnitOfMeasurement;
 
+  @Column({ nullable: true })
+  // Future enhancement: link to a Vendor entity for manufacturer details
+  manufacturerId: string; // future FK → vendor_masters.id
+
   // ── Description ───────────────────────────────────────────────────
 
   @Column({ length: 500, nullable: false })
