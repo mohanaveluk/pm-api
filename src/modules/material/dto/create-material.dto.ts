@@ -25,6 +25,10 @@ export class MaterialTechnicalSpecDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   modelPartNumber?: string;
 
+  @ApiPropertyOptional({ description: 'Manufacturer UUID (future FK → vendor_masters)' })
+  @IsOptional() @IsString() @Length(1, 36)
+  manufacturerId?: string;
+
   @ApiPropertyOptional({ example: 'Tenaris' })
   @IsOptional() @IsString() @Length(1, 255)
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))

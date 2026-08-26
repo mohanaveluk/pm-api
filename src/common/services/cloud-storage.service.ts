@@ -58,7 +58,7 @@ export class CloudStorageService {
           } catch (error) {
             reject(
               new BadRequestException(
-                `Failed to make file public: ${error.message}`
+                `Failed to make file public: ${error instanceof Error ? error.message : String(error)}`
               )
             );
           }
@@ -67,7 +67,7 @@ export class CloudStorageService {
         stream.end(file.buffer);
       });
     } catch (error) {
-      throw new BadRequestException(`Upload service error: ${error.message}`);
+      throw new BadRequestException(`Upload service error: ${error instanceof Error ? error.message : String(error) || error}`);
     }
   }
 
@@ -85,7 +85,7 @@ export class CloudStorageService {
       await file.delete();
     } catch (error) {
       // Don't throw error if file doesn't exist, just log it
-      console.warn(`Failed to delete file: ${error.message}`);
+      console.warn(`Failed to delete file: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -109,6 +109,12 @@ export class CloudStorageService {
       'image/png',
       'image/gif',
       'image/webp',
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'text/csv',
+      'text/plain',
     ];
 
     const maxSizeInBytes = 5 * 1024 * 1024; // 5MB

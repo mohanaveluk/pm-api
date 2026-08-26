@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"d:\\\\projects\\\\project-management\\\\pm-api\")",
+      "Bash(Select-Object -Property Name, PSIsContainer)",
+      "Bash(Format-Table -AutoSize)",
+      "Bash(npx tsc *)",
+      "Bash(Get-ChildItem -Path \"D:\\\\projects\\\\project-management\\\\pm-api\" -Recurse -Include \"*.ts\", \"*.json\")",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(Sort-Object)",
+      "Bash(find src/modules/organization src/modules/subscription-plan src/modules/organization-subscription src/modules/payment src/modules/dashboard -type f)",
+      "Bash(dir /s /b src\\\\modules\\\\organization src\\\\modules\\\\subscription-plan src\\\\modules\\\\organization-subscription src\\\\modules\\\\payment src\\\\modules\\\\dashboard)",
+      "PowerShell(Get-ChildItem -Path \"D:\\\\projects\\\\project-management\\\\pm-app\" -Recurse -Force | Select-Object FullName | ForEach-Object { $_.FullName.Replace\\(\"D:\\\\projects\\\\project-management\\\\pm-app\\\\\", \"\"\\) } | Sort-Object)",
+      "Bash(npx --prefix \"D:/projects/project-management/pm-app\" tsc -p \"D:/projects/project-management/pm-app/tsconfig.json\" --noEmit)",
+      "Bash(xargs grep -l \"Organization\")",
+      "Bash(xargs grep -l \"project\\\\|Project\")",
+      "Bash(xargs grep -l \"\")"
+    ]
+  }
+}

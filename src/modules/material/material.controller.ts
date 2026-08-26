@@ -1,9 +1,11 @@
 import {
+  BadRequestException,
   Body, Controller, Delete, Get, HttpCode, HttpStatus,
-  Param, Patch, Post, Put, Query, Request, UseGuards,
+  Param, Patch, Post, Put, Query, Request, UploadedFile, UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import {
-  ApiBearerAuth, ApiOperation, ApiParam, ApiQuery,
+  ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiParam, ApiQuery,
   ApiResponse, ApiTags,
 } from '@nestjs/swagger';
 
@@ -16,6 +18,8 @@ import { MaterialService }      from './material.service';
 import { CreateMaterialDto }    from './dto/create-material.dto';
 import { UpdateMaterialDto }    from './dto/update-material.dto';
 import { MaterialQueryDto }     from './dto/material-query.dto';
+import { memoryStorage } from 'multer';
+import { FileInterceptor } from '@nestjs/platform-express';
 
 @ApiTags('Material Master')
 @ApiBearerAuth('JWT-auth')
@@ -128,4 +132,20 @@ export class MaterialController {
     await this.materialService.remove(id, req.user.organizationId, req.user.email);
     return ResponseDto.deleted('Material deleted successfully');
   }
+
+  @Post('specification/document')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Upload material specification document (image or PDF)' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({ schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } })
+  @ApiResponse({ status: 201, description: 'Document uploaded, returns URL' })
+  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
+  async uploadMaterialSpecificationDocument(
+    @Request() req: any,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) throw new BadRequestException('No file provided');
+    return this.materialService.uploadMaterialSpecificationDocument(req.user.userId, file);
+  }  
 }
