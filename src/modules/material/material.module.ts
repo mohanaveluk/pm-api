@@ -11,6 +11,8 @@ import { MaterialController }            from './material.controller';
 import { MaterialService }               from './material.service';
 import { MaterialCodeService }           from './material-code.service';
 import { MaterialUsageValidationService } from './material-usage-validation.service';
+import { User } from '../user/entity/user.entity';
+import { CloudStorageService } from 'src/common/services/cloud-storage.service';
 
 @Module({
   imports: [
@@ -20,10 +22,11 @@ import { MaterialUsageValidationService } from './material-usage-validation.serv
       MaterialCategory,
       MaterialGroup,
       UnitOfMeasurement,
+      User,
     ]),
   ],
   controllers: [MaterialController],
-  providers:   [MaterialService, MaterialCodeService, MaterialUsageValidationService],
+  providers:   [MaterialService, MaterialCodeService, MaterialUsageValidationService, CloudStorageService],
   exports:     [MaterialService, MaterialUsageValidationService],
 })
 export class MaterialModule {}

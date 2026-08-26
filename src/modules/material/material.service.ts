@@ -26,6 +26,8 @@ import {
 import { MaterialStatus }   from './enums/material-status.enum';
 import { MaterialCodeService } from './material-code.service';
 import { MaterialUsageValidationService } from './material-usage-validation.service';
+import { User } from '../user/entity/user.entity';
+import { CloudStorageService } from 'src/common/services/cloud-storage.service';
 
 const ALLOWED_SORT_FIELDS = new Set([
   'code', 'shortDescription', 'status', 'criticalityLevel',
@@ -45,9 +47,12 @@ export class MaterialService {
     private readonly groupRepo: Repository<MaterialGroup>,
     @InjectRepository(UnitOfMeasurement)
     private readonly uomRepo: Repository<UnitOfMeasurement>,
+    @InjectRepository(User)
+    private userRepository: Repository<User>,    
     private readonly dataSource: DataSource,
     private readonly codeService: MaterialCodeService,
     private readonly usageValidation: MaterialUsageValidationService,
+    private readonly cloudStorageService: CloudStorageService,
   ) {}
 
   // ── Dependency validators ─────────────────────────────────────────────
@@ -349,4 +354,18 @@ export class MaterialService {
     material.updatedBy = userEmail;
     await this.materialRepo.save(material);
   }
+
+  async uploadMaterialSpecificationDocument(userId: string, file: Express.Multer.File): Promise<{ message: string; url: string }> {
+    const user = await this.userRepository.findOne({
+      where: { id: userId }
+    });
+    if (!user) throw new NotFoundException('User not found');
+
+    await this.cloudStorageService.isFileValid(file);
+
+    const folder = `pm/material/${user.id}`;
+    const url = await this.cloudStorageService.uploadFile(file, folder);
+
+    return { message: 'Material Specification document uploaded successfully', url };
+  }  
 }
