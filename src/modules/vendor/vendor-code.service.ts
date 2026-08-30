@@ -61,8 +61,9 @@ export class VendorCodeService {
           lock: { mode: 'pessimistic_write' },
         });
       } catch (err) {
+        const error = err as { code?: string };
         // Unique constraint violation (ER_DUP_ENTRY) — another transaction won; re-read
-        if (err?.code === 'ER_DUP_ENTRY') {
+        if (error.code === 'ER_DUP_ENTRY') {
           counter = await queryRunner.manager.findOne(VendorCodeCounter, {
             where: { organizationId, categoryPrefix },
             lock: { mode: 'pessimistic_write' },

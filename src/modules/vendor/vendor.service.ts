@@ -561,7 +561,7 @@ export class VendorService {
 
       this.logger.log(`Vendor ${code} created in organization ${organizationId} by ${userEmail}`);
       return this.findOne(vendorId, organizationId, userEmail, /* role */ '');
-    } catch (err) {
+    } catch (err: any) {
       await queryRunner.rollbackTransaction();
       if (err?.code === 'ER_DUP_ENTRY') {
         // The counter lock makes a code collision effectively impossible; this
