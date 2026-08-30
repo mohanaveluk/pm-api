@@ -19,6 +19,7 @@ export class MaterialListItemDto {
   @ApiProperty() code: string;
   @ApiProperty() shortDescription: string;
   @ApiPropertyOptional() longDescription?: string;
+  @ApiPropertyOptional() specialInstruction?: string;
   @ApiProperty() materialCategoryId: string;
   @ApiProperty() materialGroupId: string;
   @ApiProperty() unitOfMeasurementId: string;
@@ -46,6 +47,7 @@ export class MaterialResponseDto {
   @ApiProperty() code: string;
   @ApiProperty() shortDescription: string;
   @ApiPropertyOptional() longDescription?: string;
+  @ApiPropertyOptional() specialInstruction?: string;
   @ApiProperty({ enum: MaterialStatus }) status: MaterialStatus;
   @ApiProperty({ enum: CriticalityLevel }) criticalityLevel: CriticalityLevel;
   @ApiProperty() isSystem: boolean;

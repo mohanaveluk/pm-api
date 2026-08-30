@@ -82,6 +82,27 @@ export class MaterialController {
     return ResponseDto.success(data);
   }
 
+  @Post(':id/clone')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Clone an existing material',
+    description:
+      'Creates a copy of the material. The clone gets a new id, a new dguid, and the ' +
+      'next sequential code in the same category (a clone of RAW000007 becomes RAW000008). ' +
+      'Every other field — descriptions, category, group, UOM, technical spec, procurement, ' +
+      'inventory, quality, accounting, safety, logistics, and document URLs — is copied ' +
+      'unchanged. Audit fields are stamped with the calling user.',
+  })
+  @ApiParam({ name: 'id', description: 'UUID of the material to clone' })
+  @ApiResponse({ status: 201, description: 'Clone created, returns the new material' })
+  @ApiResponse({ status: 404, description: 'Source material not found in this organization' })
+  @ApiResponse({ status: 409, description: 'Category, group, or UOM has since been deactivated' })
+  async clone(@Param('id') id: string, @Request() req) {
+    const data = await this.materialService.clone(id, req.user.organizationId, req.user.email);
+    return ResponseDto.created(data, 'Material cloned successfully');
+  }
+
   @Put(':id')
   @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
   @ApiOperation({ summary: 'Update material (all sections)' })

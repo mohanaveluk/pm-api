@@ -19,6 +19,7 @@ import { ResponseDto }  from 'src/common/dto/response.dto';
 import { VendorService }   from './vendor.service';
 import { CreateVendorDto } from './dto/create-vendor.dto';
 import { UpdateVendorDto } from './dto/update-vendor.dto';
+import { CloneVendorDto }  from './dto/clone-vendor.dto';
 import { VendorQueryDto }  from './dto/vendor-query.dto';
 import {
   VendorAddressResponseDto,
@@ -178,6 +179,39 @@ export class VendorController {
       id, req.user.organizationId, req.user.email, req.user.role,
     );
     return ResponseDto.success(data);
+  }
+
+  @Post(':id/clone')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Clone an existing vendor with all its reference data',
+    description:
+      'Creates a copy of the vendor. The clone gets a new id, a new dguid, and the next ' +
+      'sequential code in the same Industry Category (a clone of CIV000007 becomes ' +
+      'CIV000008). Every other column is copied unchanged, along with all reference ' +
+      'tables: addresses, contacts, bank accounts, certifications, documents, material ' +
+      'mappings, and turnovers — each row re-keyed with its own new id and dguid.\n\n' +
+      'Three fields need care because the module enforces uniqueness on them. vendorName ' +
+      'defaults to the source name plus a " (Copy)" suffix, and the two statutory ' +
+      'registration numbers are left empty; pass any of them in the body to set them ' +
+      'explicitly. The request body is optional.\n\n' +
+      'Evaluation history, performance scores, and blacklist request history are NOT ' +
+      'copied — they record events that happened to the source vendor, and attributing ' +
+      'them to a new record would falsify the audit trail.',
+  })
+  @ApiParam({ name: 'id', description: 'UUID of the vendor to clone' })
+  @ApiBody({ type: CloneVendorDto, required: false })
+  @ApiResponse({ status: 201, description: 'Clone created, returns the new vendor', type: VendorResponseDto })
+  @ApiResponse({ status: 404, description: 'Source vendor not found in this organization'                   })
+  @ApiResponse({ status: 409, description: 'Industry Category deactivated, or the supplied name/registration number is already taken' })
+  async clone(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CloneVendorDto,
+    @Request() req,
+  ) {
+    const data = await this.vendorService.clone(id, req.user.organizationId, req.user.email, dto);
+    return ResponseDto.created(data, 'Vendor cloned successfully');
   }
 
   @Put(':id')

@@ -25,6 +25,7 @@ import { VendorTurnover }      from './entities/vendor-turnover.entity';
 import { VendorEvaluation }    from './entities/vendor-evaluation.entity';
 import { VendorPerformance }   from './entities/vendor-performance.entity';
 import { IndustryCategory }    from '../industry-category/entities/industry-category.entity';
+import { MaterialCategory }    from '../material-category/entities/material-category.entity';
 import { Material }            from '../material/entities/material.entity';
 import { User }                from '../user/entity/user.entity';
 
@@ -160,6 +161,7 @@ describe('VendorService', () => {
         { provide: getRepositoryToken(VendorPerformance),   useValue: makeRepo() },
         { provide: getRepositoryToken(VendorStatusChangeRequest), useValue: statusRequestRepo },
         { provide: getRepositoryToken(IndustryCategory),    useValue: categoryRepo },
+        { provide: getRepositoryToken(MaterialCategory),    useValue: makeRepo() },
         { provide: getRepositoryToken(Material),            useValue: materialRepo },
         { provide: getRepositoryToken(User),                useValue: userRepo },
         { provide: DataSource,          useValue: dataSource },
@@ -316,9 +318,13 @@ describe('VendorService', () => {
 
       await service.update(VENDOR_ID, { tradeName: 'ABC Fab' } as any, ORG_A, USER, 'Manager');
 
-      expect(vendorRepo.save).toHaveBeenCalledWith(
+      // update() persists through the transaction's manager, since it also
+      // replaces child collections in the same unit of work.
+      expect(queryRunner.manager.save).toHaveBeenCalledWith(
+        Vendor,
         expect.objectContaining({ tradeName: 'ABC Fab', updatedBy: USER }),
       );
+      expect(queryRunner.commitTransaction).toHaveBeenCalled();
     });
 
     it('returns 404 for an unknown vendor', async () => {
@@ -429,6 +435,331 @@ describe('VendorService', () => {
     it('refuses cross-organization enable', async () => {
       vendorRepo.findOne.mockResolvedValue(null);
       await expect(service.enable(VENDOR_ID, ORG_B, USER, 'SuperAdmin')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ══ Clone ══════════════════════════════════════════════════════════════
+
+  describe('clone', () => {
+    const CLONE_USER = 'planner@example.com';
+
+    // A fully-populated source spanning every section, so the copy test proves
+    // the whole row rides along rather than a handful of columns.
+    const fullSource = (overrides: Partial<Vendor> = {}) => existingVendor({
+      dguid: 'source-dguid',
+      code: 'CIV000007',
+      tradeName: 'ABC Fabricators',
+      vendorDescription: 'Piping spools and structural steel',
+      countryOfRegistration: 'AE',
+      businessRegistrationNumber: 'CN-1234567',
+      taxRegistrationNumber: '100123456700003',
+      email: 'contact@vendor.example',
+      website: 'https://vendor.example.ae',
+      paymentTerms: 'NET_45',
+      creditLimitRequested: 500000,
+      currency: 'USD',
+      productCategories: ['Piping', 'Structural Steel'],
+      standardLeadTimeDays: 30,
+      vendorEvaluationScore: 82.5,
+      remarks: 'Introduced by the projects team',
+      createdBy: 'someone.else@example.com',
+      updatedBy: 'someone.else@example.com',
+      createdAt: new Date('2020-01-01T00:00:00Z'),
+      updatedAt: new Date('2021-06-01T00:00:00Z'),
+      ...overrides,
+    } as Partial<Vendor>);
+
+    // Child rows returned by the transaction manager's reads.
+    const childRows: Record<string, any[]> = {};
+    let txManager: any;
+    let savedByEntity: Array<{ entity: any; rows: any }>;
+
+    beforeEach(() => {
+      savedByEntity = [];
+      Object.keys(childRows).forEach(k => delete childRows[k]);
+
+      jest.spyOn(service, 'findOne').mockResolvedValue({} as any);
+      categoryRepo.findOne.mockResolvedValue(activeCategory());
+      // Counter sits at 7, so the clone takes CIV000008.
+      queryRunner.manager.findOne.mockResolvedValue({ categoryPrefix: 'CIV', lastSequence: 7 });
+
+      txManager = queryRunner.manager;
+      txManager.create = jest.fn((_e: any, v: any) => v);
+      txManager.save = jest.fn(async (entity: any, rows: any) => {
+        savedByEntity.push({ entity, rows });
+        return rows;
+      });
+      txManager.find = jest.fn(async (entity: any) => childRows[entity.name] ?? []);
+      txManager.createQueryBuilder = jest.fn(() =>
+        makeQb({ getMany: jest.fn(async () => childRows['VendorBankAccount'] ?? []) }),
+      );
+    });
+
+    const savedVendor = () =>
+      savedByEntity.find(s => s.entity === Vendor)?.rows;
+    const savedChildren = (entity: any) =>
+      savedByEntity.find(s => s.entity === entity)?.rows ?? [];
+
+    it('issues the next sequential code in the same industry category', async () => {
+      vendorRepo.findOne.mockResolvedValue(fullSource());
+
+      await service.clone(VENDOR_ID, ORG_A, CLONE_USER);
+
+      expect(savedVendor().code).toBe('CIV000008');
+    });
+
+    it('mints a new id and dguid', async () => {
+      const source = fullSource();
+      vendorRepo.findOne.mockResolvedValue(source);
+
+      await service.clone(VENDOR_ID, ORG_A, CLONE_USER);
+      const clone = savedVendor();
+
+      expect(clone.id).toBeDefined();
+      expect(clone.dguid).toBeDefined();
+      expect(clone.id).not.toBe(source.id);
+      expect(clone.dguid).not.toBe(source.dguid);
+    });
+
+    it('copies every other column verbatim', async () => {
+      const source = fullSource();
+      vendorRepo.findOne.mockResolvedValue(source);
+
+      await service.clone(VENDOR_ID, ORG_A, CLONE_USER);
+      const clone = savedVendor();
+
+      const reassigned = new Set([
+        'id', 'dguid', 'code', 'vendorName',
+        'businessRegistrationNumber', 'taxRegistrationNumber',
+        'pendingStatusChange', 'pendingStatusChangeRequestId',
+        'createdBy', 'updatedBy', 'createdAt', 'updatedAt',
+        'deletedAt', 'deletedBy',
+      ]);
+      for (const [key, value] of Object.entries(source)) {
+        if (reassigned.has(key)) continue;
+        expect({ [key]: clone[key] }).toEqual({ [key]: value });
+      }
+    });
+
+    it('suffixes the vendor name so the org-unique rule still holds', async () => {
+      vendorRepo.findOne.mockResolvedValue(fullSource());
+
+      await service.clone(VENDOR_ID, ORG_A, CLONE_USER);
+
+      expect(savedVendor().vendorName).toBe('ABC Engineering LLC (Copy)');
+    });
+
+    it('escalates the suffix when earlier copies already exist', async () => {
+      vendorRepo.findOne.mockResolvedValue(fullSource());
+      // "(Copy)" and "(Copy 2)" taken, "(Copy 3)" free.
+      let call = 0;
+      vendorRepo.createQueryBuilder.mockImplementation(() =>
+        makeQb({ getExists: jest.fn(async () => ++call <= 2) }),
+      );
+
+      await service.clone(VENDOR_ID, ORG_A, CLONE_USER);
+
+      expect(savedVendor().vendorName).toBe('ABC Engineering LLC (Copy 3)');
+    });
+
+    it('honours an explicit vendorName override', async () => {
+      vendorRepo.findOne.mockResolvedValue(fullSource());
+
+      await service.clone(VENDOR_ID, ORG_A, CLONE_USER, { vendorName: 'ABC Engineering Qatar' });
+
+      expect(savedVendor().vendorName).toBe('ABC Engineering Qatar');
+    });
+
+    it('clears statutory registration numbers unless supplied', async () => {
+      vendorRepo.findOne.mockResolvedValue(fullSource());
+
+      await service.clone(VENDOR_ID, ORG_A, CLONE_USER);
+      const clone = savedVendor();
+
+      expect(clone.businessRegistrationNumber).toBeNull();
+      expect(clone.taxRegistrationNumber).toBeNull();
+    });
+
+    it('carries over supplied registration numbers', async () => {
+      vendorRepo.findOne.mockResolvedValue(fullSource());
+
+      await service.clone(VENDOR_ID, ORG_A, CLONE_USER, {
+        businessRegistrationNumber: 'CN-7654321',
+        taxRegistrationNumber: '100987654300003',
+      });
+      const clone = savedVendor();
+
+      expect(clone.businessRegistrationNumber).toBe('CN-7654321');
+      expect(clone.taxRegistrationNumber).toBe('100987654300003');
+    });
+
+    it('never carries the source pending-request pointer onto the clone', async () => {
+      vendorRepo.findOne.mockResolvedValue(fullSource({
+        pendingStatusChange: PendingStatusChange.PENDING_BLACKLIST,
+        pendingStatusChangeRequestId: 'req-of-the-source',
+      } as Partial<Vendor>));
+
+      await service.clone(VENDOR_ID, ORG_A, CLONE_USER);
+      const clone = savedVendor();
+
+      expect(clone.pendingStatusChange).toBeNull();
+      expect(clone.pendingStatusChangeRequestId).toBeNull();
+    });
+
+    it('stamps audit fields with the calling user, not the source author', async () => {
+      vendorRepo.findOne.mockResolvedValue(fullSource());
+
+      await service.clone(VENDOR_ID, ORG_A, CLONE_USER);
+      const clone = savedVendor();
+
+      expect(clone.createdBy).toBe(CLONE_USER);
+      expect(clone.updatedBy).toBe(CLONE_USER);
+      expect(clone.isDeleted).toBe(false);
+      expect(clone.deletedAt).toBeNull();
+    });
+
+    // ── Reference tables ─────────────────────────────────────────────
+
+    it('copies every reference table, re-keyed to the clone', async () => {
+      vendorRepo.findOne.mockResolvedValue(fullSource());
+      childRows['VendorAddress']       = [{ id: 'a1', dguid: 'ad1', vendorId: VENDOR_ID, city: 'Jubail' }];
+      childRows['VendorContact']       = [{ id: 'c1', dguid: 'cd1', vendorId: VENDOR_ID, contactPerson: 'A. Rahman' }];
+      childRows['VendorBankAccount']   = [{ id: 'b1', dguid: 'bd1', vendorId: VENDOR_ID, bankName: 'Emirates NBD' }];
+      childRows['VendorCertification'] = [{ id: 'x1', dguid: 'xd1', vendorId: VENDOR_ID, certificationName: 'ISO 9001' }];
+      childRows['VendorMaterial']      = [{ id: 'm1', dguid: 'md1', vendorId: VENDOR_ID, materialId: 'mat-1' }];
+      childRows['VendorTurnover']      = [{ id: 't1', dguid: 'td1', vendorId: VENDOR_ID, financialYear: 2025 }];
+
+      await service.clone(VENDOR_ID, ORG_A, CLONE_USER);
+      const cloneId = savedVendor().id;
+
+      for (const entity of [VendorAddress, VendorContact, VendorBankAccount, VendorCertification, VendorMaterial, VendorTurnover]) {
+        const rows = savedChildren(entity);
+        expect(rows).toHaveLength(1);
+        expect(rows[0].vendorId).toBe(cloneId);
+        expect(rows[0].id).not.toBe(childRows[entity.name][0].id);
+        expect(rows[0].dguid).not.toBe(childRows[entity.name][0].dguid);
+        expect(rows[0].createdBy).toBe(CLONE_USER);
+      }
+      // Payload survives the re-key.
+      expect(savedChildren(VendorContact)[0].contactPerson).toBe('A. Rahman');
+      expect(savedChildren(VendorMaterial)[0].materialId).toBe('mat-1');
+      expect(savedChildren(VendorTurnover)[0].financialYear).toBe(2025);
+    });
+
+    it('selects the masked bank columns so account details are not lost', async () => {
+      vendorRepo.findOne.mockResolvedValue(fullSource());
+      const qb = makeQb({ getMany: jest.fn(async () => []) });
+      txManager.createQueryBuilder = jest.fn(() => qb);
+
+      await service.clone(VENDOR_ID, ORG_A, CLONE_USER);
+
+      expect(qb.addSelect).toHaveBeenCalledWith(['b.accountNumber', 'b.iban', 'b.swiftCode']);
+    });
+
+    it('restarts cloned document version chains instead of pointing at the source', async () => {
+      vendorRepo.findOne.mockResolvedValue(fullSource());
+      childRows['VendorDocument'] = [{
+        id: 'd1', dguid: 'dd1', vendorId: VENDOR_ID,
+        documentUrl: 'https://storage.example.com/tl.pdf',
+        version: 4, supersedesId: 'd0',
+      }];
+
+      await service.clone(VENDOR_ID, ORG_A, CLONE_USER);
+      const [doc] = savedChildren(VendorDocument);
+
+      expect(doc.documentUrl).toBe('https://storage.example.com/tl.pdf');
+      expect(doc.version).toBe(1);
+      expect(doc.supersedesId).toBeNull();
+      expect(doc.uploadedBy).toBe(CLONE_USER);
+    });
+
+    it('does not copy evaluation, performance, or blacklist history', async () => {
+      vendorRepo.findOne.mockResolvedValue(fullSource());
+
+      await service.clone(VENDOR_ID, ORG_A, CLONE_USER);
+
+      const touched = savedByEntity.map(s => s.entity);
+      expect(touched).not.toContain(VendorEvaluation);
+      expect(touched).not.toContain(VendorPerformance);
+      expect(touched).not.toContain(VendorStatusChangeRequest);
+    });
+
+    it('copies nothing extra when the vendor has no child rows', async () => {
+      vendorRepo.findOne.mockResolvedValue(fullSource());
+
+      await service.clone(VENDOR_ID, ORG_A, CLONE_USER);
+
+      // Only the vendor row and the code counter are written.
+      const childWrites = savedByEntity
+        .filter(s => s.entity !== Vendor && s.entity !== VendorCodeCounter);
+      expect(childWrites).toHaveLength(0);
+      expect(queryRunner.commitTransaction).toHaveBeenCalled();
+    });
+
+    // ── Failure paths ────────────────────────────────────────────────
+
+    it('returns 404 for an unknown vendor', async () => {
+      vendorRepo.findOne.mockResolvedValue(null);
+      await expect(service.clone(VENDOR_ID, ORG_A, CLONE_USER)).rejects.toThrow(NotFoundException);
+      expect(dataSource.createQueryRunner).not.toHaveBeenCalled();
+    });
+
+    it('refuses to clone another organization\'s vendor', async () => {
+      vendorRepo.findOne.mockResolvedValue(null);
+
+      await expect(service.clone(VENDOR_ID, ORG_B, CLONE_USER)).rejects.toThrow(NotFoundException);
+      expect(vendorRepo.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ organizationId: ORG_B }) }),
+      );
+    });
+
+    it('refuses when the Industry Category has since been deactivated', async () => {
+      vendorRepo.findOne.mockResolvedValue(fullSource());
+      categoryRepo.findOne.mockResolvedValue(activeCategory({ isActive: false }));
+
+      await expect(service.clone(VENDOR_ID, ORG_A, CLONE_USER)).rejects.toThrow(ConflictException);
+      expect(dataSource.createQueryRunner).not.toHaveBeenCalled();
+    });
+
+    it('refuses an explicit name that is already taken', async () => {
+      vendorRepo.findOne.mockResolvedValue(fullSource());
+      vendorRepo.createQueryBuilder.mockReturnValue(makeQb({ getExists: jest.fn(async () => true) }));
+
+      await expect(
+        service.clone(VENDOR_ID, ORG_A, CLONE_USER, { vendorName: 'Taken Name' }),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('rolls back and releases the connection when a child insert fails', async () => {
+      vendorRepo.findOne.mockResolvedValue(fullSource());
+      childRows['VendorContact'] = [{ id: 'c1', dguid: 'cd1', vendorId: VENDOR_ID, contactPerson: 'A' }];
+      txManager.save = jest.fn(async (entity: any) => {
+        if (entity === VendorContact) throw new Error('db down');
+        return [];
+      });
+
+      await expect(service.clone(VENDOR_ID, ORG_A, CLONE_USER)).rejects.toThrow('db down');
+      expect(queryRunner.rollbackTransaction).toHaveBeenCalled();
+      expect(queryRunner.commitTransaction).not.toHaveBeenCalled();
+      expect(queryRunner.release).toHaveBeenCalled();
+    });
+
+    it('issues distinct codes when the same vendor is cloned repeatedly', async () => {
+      vendorRepo.findOne.mockResolvedValue(fullSource());
+      const counter = { categoryPrefix: 'CIV', lastSequence: 7 };
+      queryRunner.manager.findOne.mockResolvedValue(counter);
+      const codes: string[] = [];
+      txManager.save = jest.fn(async (entity: any, rows: any) => {
+        if (rows?.lastSequence !== undefined) counter.lastSequence = rows.lastSequence;
+        if (entity === Vendor) codes.push(rows.code);
+        return rows;
+      });
+
+      await service.clone(VENDOR_ID, ORG_A, CLONE_USER);
+      await service.clone(VENDOR_ID, ORG_A, CLONE_USER);
+      await service.clone(VENDOR_ID, ORG_A, CLONE_USER);
+
+      expect(codes).toEqual(['CIV000008', 'CIV000009', 'CIV000010']);
     });
   });
 

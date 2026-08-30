@@ -400,6 +400,19 @@ export class CreateMaterialDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   longDescription?: string;
 
+  
+  @ApiPropertyOptional({
+    example: 'Black color 6 inch NB, Schedule 40, 6000mm length',
+    description: 'Special Instruction (max 4000 chars)',
+  })
+  @IsOptional()
+  @IsString()
+  @Length(1, 4000)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  specialInstruction?: string;
+
+
+
   @ApiPropertyOptional({ example: false })
   @IsOptional() @IsBoolean()
   isSystem?: boolean;

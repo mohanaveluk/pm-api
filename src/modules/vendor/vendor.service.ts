@@ -33,6 +33,7 @@ import { vendorStatusApprovalTemplate } from 'src/shared/email/templates/vendor-
 
 import { CreateVendorDto } from './dto/create-vendor.dto';
 import { UpdateVendorDto } from './dto/update-vendor.dto';
+import { CloneVendorDto }  from './dto/clone-vendor.dto';
 import { VendorQueryDto }  from './dto/vendor-query.dto';
 import {
   VendorAddressResponseDto,
@@ -560,7 +561,7 @@ export class VendorService {
 
       this.logger.log(`Vendor ${code} created in organization ${organizationId} by ${userEmail}`);
       return this.findOne(vendorId, organizationId, userEmail, /* role */ '');
-    } catch (err) {
+    } catch (err: any) {
       await queryRunner.rollbackTransaction();
       if (err?.code === 'ER_DUP_ENTRY') {
         // The counter lock makes a code collision effectively impossible; this
@@ -639,6 +640,230 @@ export class VendorService {
       await manager.save(VendorTurnover, dto.turnovers.map(t =>
         manager.create(VendorTurnover, { ...t, ...base, dguid: uuidv4() }),
       ));
+    }
+  }
+
+  // ══ Clone ═════════════════════════════════════════════════════════════
+
+  // Clones a vendor and every one of its reference tables. The copy gets a
+  // fresh id and dguid, and a new code taken as the next sequence in the SAME
+  // Industry Category — a clone of CIV000007 becomes CIV000008.
+  //
+  // Reuses the same locked-counter path as create(), so a clone racing another
+  // create or clone can never duplicate a code, and everything lands in one
+  // transaction: a failure anywhere leaves no half-built vendor behind.
+  //
+  // Copied child tables: addresses, contacts, bank accounts, certifications,
+  // documents, material mappings, turnovers.
+  //
+  // NOT copied: vendor_evaluations, vendor_performances, and
+  // vendor_status_change_requests. Those are append-only records of things that
+  // actually happened to the source vendor — approvals granted, scores awarded,
+  // blacklistings decided. Copying them would attribute real decisions to a
+  // vendor that never underwent them, which is exactly the history-fabrication
+  // those tables exist to prevent.
+  async clone(
+    id: string,
+    organizationId: string,
+    userEmail: string,
+    dto: CloneVendorDto = {},
+  ): Promise<VendorResponseDto> {
+    // Load WITHOUT relations: the copy must carry only FK columns, never the
+    // loaded parent entities, which TypeORM would otherwise try to re-persist.
+    const source = await this.vendorRepo.findOne({
+      where: { id, organizationId, isDeleted: false },
+    });
+    if (!source) throw new NotFoundException(`Vendor ${id} not found`);
+
+    // Same validation as create(): a new vendor must not be created under an
+    // Industry Category that has since been deactivated. Also yields the name
+    // the code prefix is derived from.
+    const category = await this.validateIndustryCategory(organizationId, source.industryCategoryId);
+
+    const vendorName = dto.vendorName
+      ?? await this.deriveUniqueVendorName(organizationId, source.vendorName);
+
+    // Statutory identifiers belong to one legal entity, and the module treats
+    // them as unique per organization + country. They are carried over only
+    // when the caller supplies replacements.
+    const businessRegistrationNumber = dto.businessRegistrationNumber ?? null;
+    const taxRegistrationNumber      = dto.taxRegistrationNumber ?? null;
+
+    await this.assertNoDuplicate(
+      organizationId,
+      { vendorName, countryOfRegistration: source.countryOfRegistration },
+      { businessRegistrationNumber, taxRegistrationNumber },
+    );
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const categoryPrefix = this.codeService.deriveCategoryPrefix(category.name);
+      const code = await this.codeService.generateCode(queryRunner, organizationId, categoryPrefix);
+
+      // Strip identity, audit, and soft-delete fields; everything else rides
+      // along unchanged.
+      const {
+        id: _id,
+        dguid: _dguid,
+        code: _code,
+        createdAt: _createdAt,
+        updatedAt: _updatedAt,
+        createdBy: _createdBy,
+        updatedBy: _updatedBy,
+        isDeleted: _isDeleted,
+        deletedAt: _deletedAt,
+        deletedBy: _deletedBy,
+        // Never copied: these point at a status change request raised against
+        // the SOURCE vendor. Carrying the pointer over would leave the clone
+        // frozen behind a request that does not belong to it.
+        pendingStatusChange: _pending,
+        pendingStatusChangeRequestId: _pendingId,
+        ...copyable
+      } = source;
+
+      const cloneId = uuidv4();
+      const clone = queryRunner.manager.create(Vendor, {
+        ...copyable,
+        id:    cloneId,
+        dguid: uuidv4(),
+        organizationId,
+        code,
+        vendorName,
+        businessRegistrationNumber,
+        taxRegistrationNumber,
+        pendingStatusChange:          null,
+        pendingStatusChangeRequestId: null,
+        isDeleted: false,
+        deletedAt: null,
+        deletedBy: null,
+        createdBy: userEmail,
+        updatedBy: userEmail,
+      });
+
+      await queryRunner.manager.save(Vendor, clone);
+      await this.cloneChildren(queryRunner.manager, id, cloneId, organizationId, userEmail);
+
+      await queryRunner.commitTransaction();
+
+      this.logger.log(`Vendor ${source.code} cloned to ${code} by ${userEmail}`);
+      return this.findOne(cloneId, organizationId, userEmail, /* role */ '');
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      if (err?.code === 'ER_DUP_ENTRY') {
+        throw new ConflictException(
+          'A conflicting vendor record already exists in your organization',
+        );
+      }
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  // Vendor names are unique per organization, so a clone cannot reuse the
+  // source name verbatim. Appends " (Copy)", then " (Copy 2)", " (Copy 3)" …
+  // until a free name is found.
+  private async deriveUniqueVendorName(
+    organizationId: string,
+    sourceName: string,
+  ): Promise<string> {
+    const nameTaken = async (candidate: string): Promise<boolean> =>
+      this.vendorRepo.createQueryBuilder('v')
+        .where('v.organizationId = :organizationId', { organizationId })
+        .andWhere('v.isDeleted = false')
+        .andWhere('v.vendorName = :vendorName', { vendorName: candidate })
+        .getExists();
+
+    // Keep the result inside the column's 255-char limit.
+    const base = sourceName.slice(0, 235);
+
+    for (let attempt = 1; attempt <= 50; attempt++) {
+      const candidate = attempt === 1 ? `${base} (Copy)` : `${base} (Copy ${attempt})`;
+      if (!(await nameTaken(candidate))) return candidate;
+    }
+    throw new ConflictException(
+      `Too many copies of "${sourceName}" already exist. Supply an explicit vendorName for the clone.`,
+    );
+  }
+
+  // Copies every reference table across to the clone, each row with a fresh id
+  // and dguid. Runs inside the caller's transaction.
+  private async cloneChildren(
+    manager: EntityManager,
+    sourceVendorId: string,
+    cloneVendorId: string,
+    organizationId: string,
+    userEmail: string,
+  ): Promise<void> {
+    const scope = { vendorId: sourceVendorId, organizationId, isDeleted: false };
+    const stamp = {
+      vendorId:  cloneVendorId,
+      organizationId,
+      createdBy: userEmail,
+      updatedBy: userEmail,
+      isDeleted: false,
+      deletedAt: null,
+      deletedBy: null,
+    };
+
+    // Re-keys one child row: drops its identity and audit columns, then points
+    // it at the clone.
+    const rekey = <T extends Record<string, any>>(row: T) => {
+      const {
+        id: _id, dguid: _dguid, vendorId: _vendorId,
+        createdAt: _createdAt, updatedAt: _updatedAt,
+        createdBy: _createdBy, updatedBy: _updatedBy,
+        isDeleted: _isDeleted, deletedAt: _deletedAt, deletedBy: _deletedBy,
+        vendor: _vendor, material: _material,
+        ...rest
+      } = row as any;
+      return { ...rest, ...stamp, id: uuidv4(), dguid: uuidv4() };
+    };
+
+    const copyCollection = async (entity: any, rows: any[]) => {
+      if (!rows.length) return;
+      await manager.save(entity, rows.map(r => manager.create(entity, rekey(r))));
+    };
+
+    // Bank accounts hold { select: false } columns; without the explicit
+    // addSelect the clone would receive rows with empty account details.
+    const bankAccounts = await manager.createQueryBuilder(VendorBankAccount, 'b')
+      .addSelect(['b.accountNumber', 'b.iban', 'b.swiftCode'])
+      .where('b.vendorId = :vendorId',             { vendorId: sourceVendorId })
+      .andWhere('b.organizationId = :organizationId', { organizationId })
+      .andWhere('b.isDeleted = false')
+      .getMany();
+
+    const [addresses, contacts, certifications, documents, materials, turnovers] = await Promise.all([
+      manager.find(VendorAddress,       { where: scope }),
+      manager.find(VendorContact,       { where: scope }),
+      manager.find(VendorCertification, { where: scope }),
+      manager.find(VendorDocument,      { where: scope }),
+      manager.find(VendorMaterial,      { where: scope }),
+      manager.find(VendorTurnover,      { where: scope }),
+    ]);
+
+    await copyCollection(VendorAddress,       addresses);
+    await copyCollection(VendorContact,       contacts);
+    await copyCollection(VendorBankAccount,   bankAccounts);
+    await copyCollection(VendorCertification, certifications);
+    await copyCollection(VendorMaterial,      materials);
+    await copyCollection(VendorTurnover,      turnovers);
+
+    // Documents keep their own version chain. supersedesId points at a row in
+    // the SOURCE vendor's chain, so it is dropped and each cloned document
+    // starts a fresh chain at version 1 rather than referencing a foreign row.
+    if (documents.length) {
+      await manager.save(VendorDocument, documents.map(d => manager.create(VendorDocument, {
+        ...rekey(d),
+        version:      1,
+        supersedesId: null,
+        uploadedBy:   userEmail,
+        uploadedAt:   new Date(),
+      })));
     }
   }
 
