@@ -29,6 +29,7 @@ import { ServiceGroupModule } from './modules/service-group/service-group.module
 import { ServiceGroupUserModule } from './modules/service-group-user/service-group-user.module';
 import { MaterialCategoryModule } from './modules/material-category/material-category.module';
 import { IndustryCategoryModule } from './modules/industry-category/industry-category.module';
+import { VendorModule } from './modules/vendor/vendor.module';
 import { MaterialGroupModule } from './modules/material-group/material-group.module';
 import { UnitOfMeasurementModule } from './modules/unit-of-measurement/unit-of-measurement.module';
 import { MaterialModule } from './modules/material/material.module';
@@ -71,6 +72,7 @@ import { User } from './modules/user/entity/user.entity';
     ServiceGroupUserModule,
     MaterialCategoryModule,
     IndustryCategoryModule,
+    VendorModule,
     MaterialGroupModule,
     UnitOfMeasurementModule,
     MaterialModule,
