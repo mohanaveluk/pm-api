@@ -83,6 +83,9 @@ export class Material {
   @Column({ type: 'text', nullable: true })
   longDescription: string;
 
+  @Column({ type: 'text', nullable: true })
+  specialInstruction: string;
+
   // ── Status & classification ───────────────────────────────────────
 
   @Column({ type: 'enum', enum: MaterialStatus, default: MaterialStatus.ACTIVE })

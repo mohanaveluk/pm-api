@@ -201,6 +201,84 @@ export class MaterialService {
     }
   }
 
+  // Clones an existing material. Everything is copied verbatim except the
+  // identity fields: a fresh id and dguid are minted, and a new code is issued
+  // as the next sequence in the SAME category — so a clone of RAW000007 becomes
+  // RAW000008 (or whatever the counter is next at).
+  //
+  // Reuses the same locked-counter path as create(), so a clone racing another
+  // create or clone can never duplicate a code.
+  async clone(
+    id: string,
+    organizationId: string,
+    userEmail: string,
+  ): Promise<MaterialResponseDto> {
+    // Load WITHOUT relations: the copy must carry only FK columns, never the
+    // loaded parent entities, which TypeORM would otherwise try to re-persist.
+    const source = await this.materialRepo.findOne({
+      where: { id, organizationId, isDeleted: false },
+    });
+    if (!source) throw new NotFoundException(`Material ${id} not found`);
+
+    // Same validation as create(): a new material must not be created under a
+    // category, group, or UOM that has since been deactivated.
+    const cat = await this.validateCategory(organizationId, source.materialCategoryId);
+    await this.validateGroup(organizationId, source.materialGroupId, source.materialCategoryId);
+    await this.validateUom(organizationId, source.unitOfMeasurementId);
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const categoryPrefix = this.codeService.deriveCategoryPrefix(cat.name);
+      const code = await this.codeService.generateCode(queryRunner, organizationId, categoryPrefix);
+
+      // Strip identity, soft-delete, and audit fields; everything else is
+      // carried over unchanged.
+      const {
+        id: _id,
+        dguid: _dguid,
+        code: _code,
+        createdAt: _createdAt,
+        updatedAt: _updatedAt,
+        createdBy: _createdBy,
+        updatedBy: _updatedBy,
+        isDeleted: _isDeleted,
+        deletedAt: _deletedAt,
+        deletedBy: _deletedBy,
+        ...copyable
+      } = source;
+
+      const clone = queryRunner.manager.create(Material, {
+        ...copyable,
+        id:             uuidv4(),
+        dguid:          uuidv4(),
+        organizationId,
+        code,
+        isDeleted:      false,
+        deletedAt:      null,
+        deletedBy:      null,
+        createdBy:      userEmail,
+        updatedBy:      userEmail,
+      });
+
+      await queryRunner.manager.save(Material, clone);
+      await queryRunner.commitTransaction();
+
+      this.logger.log(`Material ${source.code} cloned to ${code} by ${userEmail}`);
+      return this.findOne(clone.id, organizationId);
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      if (err?.code === 'ER_DUP_ENTRY') {
+        throw new ConflictException('A material with this code already exists in your organization');
+      }
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
   async findAll(
     query: MaterialQueryDto,
     organizationId: string,
