@@ -37,7 +37,7 @@ export class MaterialCategoryController {
     summary: 'Create a Material Category',
     description:
       'Creates a new material classification category scoped to the authenticated organization. ' +
-      'Code is auto-uppercased and immutable after creation.',
+      'Code is server-generated as a per-organization sequence starting at 0001 and is immutable.',
   })
   @ApiBody({ type: CreateMaterialCategoryDto })
   @ApiResponse({ status: 201, description: 'Category created',                   type: MaterialCategoryResponseDto })

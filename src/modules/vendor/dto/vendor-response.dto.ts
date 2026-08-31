@@ -1,6 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-import { VendorType }           from '../enums/vendor-type.enum';
 import { VendorStatus }         from '../enums/vendor-status.enum';
 import { PendingStatusChange }  from '../enums/pending-status-change.enum';
 import { VendorClassification } from '../enums/vendor-classification.enum';
@@ -170,7 +169,8 @@ export class VendorDropdownDto {
   @ApiProperty({ example: 'CIV000001' }) code: string;
   @ApiProperty() vendorName: string;
   @ApiPropertyOptional() tradeName?: string;
-  @ApiProperty({ enum: VendorType }) vendorType: VendorType;
+  @ApiProperty() vendorTypeId: string;
+  @ApiPropertyOptional({ description: 'Joined for display' }) vendorTypeName?: string;
   @ApiProperty({ enum: VendorStatus }) vendorStatus: VendorStatus;
   @ApiPropertyOptional({ enum: VendorClassification }) vendorClassification?: VendorClassification;
   @ApiProperty() industryCategoryId: string;
@@ -182,7 +182,8 @@ export class VendorListItemDto {
   @ApiProperty({ example: 'CIV000001' }) code: string;
   @ApiProperty() vendorName: string;
   @ApiPropertyOptional() tradeName?: string;
-  @ApiProperty({ enum: VendorType }) vendorType: VendorType;
+  @ApiProperty() vendorTypeId: string;
+  @ApiPropertyOptional({ description: 'Joined for display' }) vendorTypeName?: string;
   @ApiProperty({ enum: VendorStatus }) vendorStatus: VendorStatus;
   @ApiProperty() isActive: boolean;
   @ApiProperty() industryCategoryId: string;
@@ -221,7 +222,8 @@ export class VendorResponseDto {
   @ApiProperty() vendorName: string;
   @ApiPropertyOptional() vendorDescription?: string;
   @ApiPropertyOptional() tradeName?: string;
-  @ApiProperty({ enum: VendorType }) vendorType: VendorType;
+  @ApiProperty() vendorTypeId: string;
+  @ApiPropertyOptional({ description: 'Joined Vendor Type master record' }) vendorType?: any;
 
   // ── Classification ────────────────────────────────────────────────
   @ApiProperty() industryCategoryId: string;

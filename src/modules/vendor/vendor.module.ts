@@ -15,6 +15,7 @@ import { VendorPerformance }   from './entities/vendor-performance.entity';
 import { VendorStatusChangeRequest } from './entities/vendor-status-change-request.entity';
 
 import { IndustryCategory } from '../industry-category/entities/industry-category.entity';
+import { VendorType }       from '../vendor-type/entity/vendor-type.entity';
 import { Material }         from '../material/entities/material.entity';
 import { User }             from '../user/entity/user.entity';
 
@@ -44,6 +45,7 @@ import { MaterialCategory } from '../material-category/entities/material-categor
       VendorPerformance,
       VendorStatusChangeRequest,
       IndustryCategory,
+      VendorType,
       MaterialCategory,
       Material,
       User,

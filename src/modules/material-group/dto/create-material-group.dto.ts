@@ -5,6 +5,9 @@ import {
 import { Transform } from 'class-transformer';
 
 export class CreateMaterialGroupDto {
+  // NOTE: `code` is absent by design — it is server-generated as a
+  // per-organization sequence starting at 0001. Supplying it has no effect.
+
   @ApiProperty({
     example: 'uuid-material-category',
     description: 'Parent Material Category UUID. Immutable after creation.',
@@ -12,21 +15,6 @@ export class CreateMaterialGroupDto {
   @IsUUID()
   @IsNotEmpty()
   materialCategoryId: string;
-
-  @ApiProperty({
-    example: 'STEEL',
-    description:
-      'Unique group code within the organization and category (1–30 chars, A-Z a-z 0-9 _ only). ' +
-      'Immutable after creation — referenced by Material Master, PR, PO, and ERP integrations.',
-  })
-  @IsString()
-  @IsNotEmpty()
-  @Length(1, 30)
-  @Matches(/^[A-Za-z0-9_]+$/, {
-    message: 'code may only contain letters, digits, and underscores (no spaces, hyphens, or special characters)',
-  })
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
-  code: string;
 
   @ApiProperty({ example: 'Steel Products', description: 'Full group name (unique within organization and category)' })
   @IsString()

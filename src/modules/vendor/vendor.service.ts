@@ -25,6 +25,7 @@ import { VendorPerformance }   from './entities/vendor-performance.entity';
 import { VendorStatusChangeRequest } from './entities/vendor-status-change-request.entity';
 
 import { IndustryCategory } from '../industry-category/entities/industry-category.entity';
+import { VendorType }       from '../vendor-type/entity/vendor-type.entity';
 import { Material }         from '../material/entities/material.entity';
 import { User }             from '../user/entity/user.entity';
 import { CloudStorageService } from 'src/common/services/cloud-storage.service';
@@ -66,7 +67,7 @@ import { VendorUsageValidationService } from './vendor-usage-validation.service'
 import { MaterialCategory } from '../material-category/entities/material-category.entity';
 
 const ALLOWED_SORT_FIELDS = new Set([
-  'code', 'vendorName', 'tradeName', 'vendorStatus', 'vendorType',
+  'code', 'vendorName', 'tradeName', 'vendorStatus', 'vendorTypeId',
   'vendorClassification', 'riskCategory', 'countryOfRegistration',
   'createdAt', 'updatedAt',
 ]);
@@ -116,6 +117,8 @@ export class VendorService {
     private readonly statusRequestRepo: Repository<VendorStatusChangeRequest>,
     @InjectRepository(IndustryCategory)
     private readonly industryCategoryRepo: Repository<IndustryCategory>,
+    @InjectRepository(VendorType)
+    private readonly vendorTypeRepo: Repository<VendorType>,
     @InjectRepository(MaterialCategory)
     private readonly materialCategoryRepo: Repository<MaterialCategory>,
     @InjectRepository(Material)
@@ -149,6 +152,26 @@ export class VendorService {
       throw new ConflictException(`Industry Category "${category.name}" is inactive`);
     }
     return category;
+  }
+
+  // Vendor Type must exist, belong to the caller's organization, be active
+  // and not deleted — same shape of check as validateIndustryCategory.
+  private async validateVendorType(
+    organizationId: string,
+    vendorTypeId: string,
+  ): Promise<VendorType> {
+    const type = await this.vendorTypeRepo.findOne({
+      where: { id: vendorTypeId, organizationId, isDeleted: false },
+    });
+    if (!type) {
+      throw new NotFoundException(
+        `Vendor Type ${vendorTypeId} not found in this organization`,
+      );
+    }
+    if (!type.isActive) {
+      throw new ConflictException(`Vendor Type "${type.name}" is inactive`);
+    }
+    return type;
   }
 
   // Parent must exist in the same organization, must not be the vendor itself,
@@ -424,7 +447,8 @@ export class VendorService {
       code:                 v.code,
       vendorName:           v.vendorName,
       tradeName:            v.tradeName,
-      vendorType:           v.vendorType,
+      vendorTypeId:         v.vendorTypeId,
+      vendorTypeName:       v.vendorType?.name,
       vendorStatus:         v.vendorStatus,
       isActive:             v.isActive,
       industryCategoryId:   v.industryCategoryId,
@@ -474,7 +498,7 @@ export class VendorService {
     }
     if (query.industryCategoryId)   qb.andWhere('v.industryCategoryId = :icId',  { icId: query.industryCategoryId });
     if (query.parentCompanyId)      qb.andWhere('v.parentCompanyId = :pcId',     { pcId: query.parentCompanyId });
-    if (query.vendorType)           qb.andWhere('v.vendorType = :vType',         { vType: query.vendorType });
+    if (query.vendorTypeId)         qb.andWhere('v.vendorTypeId = :vTypeId',     { vTypeId: query.vendorTypeId });
     if (query.vendorStatus)         qb.andWhere('v.vendorStatus = :vStatus',     { vStatus: query.vendorStatus });
     if (query.vendorClassification) qb.andWhere('v.vendorClassification = :vc',  { vc: query.vendorClassification });
     if (query.riskCategory)         qb.andWhere('v.riskCategory = :rc',          { rc: query.riskCategory });
@@ -500,6 +524,7 @@ export class VendorService {
     // Validate everything that can be checked without a transaction first, so
     // we never open one only to roll it straight back.
     const category = await this.validateIndustryCategory(organizationId, dto.industryCategoryId);
+    await this.validateVendorType(organizationId, dto.vendorTypeId);
 
     if (dto.parentCompanyId) {
       await this.validateParentCompany(organizationId, dto.parentCompanyId);
@@ -679,6 +704,7 @@ export class VendorService {
     // Industry Category that has since been deactivated. Also yields the name
     // the code prefix is derived from.
     const category = await this.validateIndustryCategory(organizationId, source.industryCategoryId);
+    await this.validateVendorType(organizationId, source.vendorTypeId);
 
     const vendorName = dto.vendorName
       ?? await this.deriveUniqueVendorName(organizationId, source.vendorName);
@@ -919,6 +945,7 @@ export class VendorService {
     const qb = this.vendorRepo.createQueryBuilder('v')
       .leftJoinAndSelect('v.industryCategory', 'industryCategory')
       .leftJoinAndSelect('v.parentCompany',    'parentCompany')
+      .leftJoinAndSelect('v.vendorType',       'vendorType')
       .where('v.organizationId = :organizationId', { organizationId })
       .andWhere('v.isDeleted = false');
 
@@ -944,16 +971,17 @@ export class VendorService {
   async findActive(
     organizationId: string,
     industryCategoryId?: string,
-    vendorType?: string,
+    vendorTypeId?: string,
   ): Promise<VendorDropdownDto[]> {
     const qb = this.vendorRepo.createQueryBuilder('v')
+      .leftJoinAndSelect('v.vendorType', 'vendorType')
       .where('v.organizationId = :organizationId', { organizationId })
       .andWhere('v.isDeleted = false')
       .andWhere('v.isActive = true')
       .andWhere('v.vendorStatus = :status', { status: VendorStatus.ACTIVE });
 
     //if (industryCategoryId) qb.andWhere('v.industryCategoryId = :icId', { icId: industryCategoryId });
-    if (vendorType)         qb.andWhere('v.vendorType = :vType',        { vType: vendorType });
+    if (vendorTypeId)       qb.andWhere('v.vendorTypeId = :vTypeId',    { vTypeId: vendorTypeId });
 
     qb.orderBy('v.vendorName', 'ASC');
 
@@ -964,7 +992,8 @@ export class VendorService {
       code:                 v.code,
       vendorName:           v.vendorName,
       tradeName:            v.tradeName,
-      vendorType:           v.vendorType,
+      vendorTypeId:         v.vendorTypeId,
+      vendorTypeName:       v.vendorType?.name,
       vendorStatus:         v.vendorStatus,
       vendorClassification: v.vendorClassification,
       industryCategoryId:   v.industryCategoryId,
@@ -978,7 +1007,7 @@ export class VendorService {
     role: string,
   ): Promise<VendorResponseDto> {
     const vendor = await this.findVendorOrThrow(id, organizationId, [
-      'industryCategory', 'parentCompany',
+      'industryCategory', 'parentCompany', 'vendorType',
     ]);
 
     const reveal = this.canViewSensitive(role);
@@ -1149,6 +1178,10 @@ export class VendorService {
 
     if (dto.parentCompanyId) {
       await this.validateParentCompany(organizationId, dto.parentCompanyId, id);
+    }
+
+    if (dto.vendorTypeId) {
+      await this.validateVendorType(organizationId, dto.vendorTypeId);
     }
 
     const nameChanged = dto.vendorName && dto.vendorName !== vendor.vendorName;

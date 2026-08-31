@@ -5,6 +5,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, ILike } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { IndustryCategory } from './entities/industry-category.entity';
+import {
+  MasterCodeService,
+  MasterSequenceKey,
+} from 'src/common/services/master-code.service';
 import { CreateIndustryCategoryDto } from './dto/create-industry-category.dto';
 import { UpdateIndustryCategoryDto } from './dto/update-industry-category.dto';
 import { IndustryCategoryQueryDto } from './dto/industry-category-query.dto';
@@ -21,29 +25,46 @@ export class IndustryCategoryService {
   constructor(
     @InjectRepository(IndustryCategory)
     private readonly icRepo: Repository<IndustryCategory>,
+    private readonly masterCodeService: MasterCodeService,
   ) {}
 
   // ── Create ────────────────────────────────────────────────────────
 
+  // code is server-generated: a per-organization sequence starting at 0001.
+  // Generation and insert share one transaction, under a row lock on the
+  // counter, so concurrent creates cannot be handed the same number.
   async create(
     organizationId: string,
     dto: CreateIndustryCategoryDto,
     createdBy: string,
   ): Promise<IndustryCategoryResponseDto> {
-    await this.assertUniqueCode(organizationId, dto.code);
     await this.assertUniqueName(organizationId, dto.name);
 
-    const ic = this.icRepo.create({
-      ...dto,
-      dguid:        uuidv4(),
+    const saved = await this.masterCodeService.withGeneratedCode(
       organizationId,
-      isActive:     dto.isActive     ?? true,
-      isSystem:     dto.isSystem     ?? false,
-      displayOrder: dto.displayOrder ?? 0,
-      createdBy,
+      MasterSequenceKey.INDUSTRY_CATEGORY,
+      async (code, queryRunner) => {
+        const ic = queryRunner.manager.create(IndustryCategory, {
+          ...dto,
+          dguid:        uuidv4(),
+          organizationId,
+          code,
+          isActive:     dto.isActive     ?? true,
+          isSystem:     dto.isSystem     ?? false,
+          displayOrder: dto.displayOrder ?? 0,
+          createdBy,
+        });
+        return queryRunner.manager.save(IndustryCategory, ic);
+      },
+    ).catch(err => {
+      if (err?.code === 'ER_DUP_ENTRY') {
+        throw new ConflictException(
+          'An Industry Category with this code already exists in your organization',
+        );
+      }
+      throw err;
     });
 
-    const saved = await this.icRepo.save(ic);
     return this.toResponse(await this.loadWithOrg(saved.id, organizationId));
   }
 
@@ -216,6 +237,8 @@ export class IndustryCategoryService {
     });
   }
 
+  // Retained as a safety net only — code is server-generated, so this can no
+  // longer fail in practice. The unique index remains the real guarantee.
   private async assertUniqueCode(
     organizationId: string,
     code: string,

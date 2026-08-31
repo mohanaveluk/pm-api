@@ -4,7 +4,6 @@ import {
   IsBoolean, IsEnum, IsInt, IsOptional, IsString, IsUUID, Max, Min,
 } from 'class-validator';
 
-import { VendorType }           from '../enums/vendor-type.enum';
 import { VendorStatus }         from '../enums/vendor-status.enum';
 import { VendorClassification } from '../enums/vendor-classification.enum';
 import { RiskCategory }         from '../enums/risk-category.enum';
@@ -23,7 +22,7 @@ export class VendorQueryDto {
 
   @ApiPropertyOptional({
     example: 'vendorName',
-    enum: ['code', 'vendorName', 'tradeName', 'vendorStatus', 'vendorType', 'vendorClassification', 'createdAt', 'updatedAt'],
+    enum: ['code', 'vendorName', 'tradeName', 'vendorStatus', 'vendorTypeId', 'vendorClassification', 'createdAt', 'updatedAt'],
   })
   @IsOptional() @IsString()
   sortBy?: string = 'createdAt';
@@ -71,9 +70,9 @@ export class VendorQueryDto {
   @IsOptional() @IsUUID()
   parentCompanyId?: string;
 
-  @ApiPropertyOptional({ enum: VendorType })
-  @IsOptional() @IsEnum(VendorType)
-  vendorType?: VendorType;
+  @ApiPropertyOptional({ example: 'uuid-of-vendor-type', description: 'Filter by Vendor Type master record' })
+  @IsOptional() @IsUUID()
+  vendorTypeId?: string;
 
   @ApiPropertyOptional({ enum: VendorStatus, description: 'Business status' })
   @IsOptional() @IsEnum(VendorStatus)

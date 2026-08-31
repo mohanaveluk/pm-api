@@ -4,8 +4,8 @@ import {
 } from 'typeorm';
 import { Organization }     from '../../organization/entity/organization.entity';
 import { IndustryCategory } from '../../industry-category/entities/industry-category.entity';
+import { VendorType }       from '../../vendor-type/entity/vendor-type.entity';
 
-import { VendorType }           from '../enums/vendor-type.enum';
 import { VendorStatus }         from '../enums/vendor-status.enum';
 import { PendingStatusChange }  from '../enums/pending-status-change.enum';
 import { VendorClassification } from '../enums/vendor-classification.enum';
@@ -33,7 +33,7 @@ import { VendorStatusChangeRequest } from './vendor-status-change-request.entity
 @Index('IDX_ven_org_name',       ['organizationId', 'vendorName'])
 @Index('IDX_ven_org_industry',   ['organizationId', 'industryCategoryId'])
 @Index('IDX_ven_org_status',     ['organizationId', 'vendorStatus'])
-@Index('IDX_ven_org_type',       ['organizationId', 'vendorType'])
+@Index('IDX_ven_org_type',       ['organizationId', 'vendorTypeId'])
 @Index('IDX_ven_org_active',     ['organizationId', 'isActive'])
 @Index('IDX_ven_org_deleted',    ['organizationId', 'isDeleted'])
 @Index('IDX_ven_org_country',    ['organizationId', 'countryOfRegistration'])
@@ -79,7 +79,13 @@ export class Vendor {
   @Column({ length: 255, nullable: true })
   tradeName: string;
 
-  @Column({ type: 'enum', enum: VendorType, nullable: false })
+  // Points at the vendor_types master (organization-administrable), not the
+  // old fixed enum — every org can define its own classifications here.
+  @Column({ nullable: false })
+  vendorTypeId: string;
+
+  @ManyToOne(() => VendorType, { nullable: false, onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'vendorTypeId' })
   vendorType: VendorType;
 
   // ── Classification ────────────────────────────────────────────────

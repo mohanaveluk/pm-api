@@ -5,6 +5,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, ILike } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { MaterialCategory } from './entities/material-category.entity';
+import {
+  MasterCodeService,
+  MasterSequenceKey,
+} from 'src/common/services/master-code.service';
 import { CreateMaterialCategoryDto } from './dto/create-material-category.dto';
 import { UpdateMaterialCategoryDto } from './dto/update-material-category.dto';
 import { MaterialCategoryQueryDto } from './dto/material-category-query.dto';
@@ -21,29 +25,46 @@ export class MaterialCategoryService {
   constructor(
     @InjectRepository(MaterialCategory)
     private readonly mcRepo: Repository<MaterialCategory>,
+    private readonly masterCodeService: MasterCodeService,
   ) {}
 
   // ── Create ────────────────────────────────────────────────────────
 
+  // code is server-generated: a per-organization sequence starting at 0001.
+  // Generation and insert share one transaction, under a row lock on the
+  // counter, so concurrent creates cannot be handed the same number.
   async create(
     organizationId: string,
     dto: CreateMaterialCategoryDto,
     createdBy: string,
   ): Promise<MaterialCategoryResponseDto> {
-    await this.assertUniqueCode(organizationId, dto.code);
     await this.assertUniqueName(organizationId, dto.name);
 
-    const mc = this.mcRepo.create({
-      ...dto,
-      dguid:        uuidv4(),
+    const saved = await this.masterCodeService.withGeneratedCode(
       organizationId,
-      isActive:     dto.isActive     ?? true,
-      isSystem:     dto.isSystem     ?? false,
-      displayOrder: dto.displayOrder ?? 0,
-      createdBy,
+      MasterSequenceKey.MATERIAL_CATEGORY,
+      async (code, queryRunner) => {
+        const mc = queryRunner.manager.create(MaterialCategory, {
+          ...dto,
+          dguid:        uuidv4(),
+          organizationId,
+          code,
+          isActive:     dto.isActive     ?? true,
+          isSystem:     dto.isSystem     ?? false,
+          displayOrder: dto.displayOrder ?? 0,
+          createdBy,
+        });
+        return queryRunner.manager.save(MaterialCategory, mc);
+      },
+    ).catch(err => {
+      if (err?.code === 'ER_DUP_ENTRY') {
+        throw new ConflictException(
+          'A Material Category with this code already exists in your organization',
+        );
+      }
+      throw err;
     });
 
-    const saved = await this.mcRepo.save(mc);
     return this.toResponse(await this.loadWithOrg(saved.id, organizationId));
   }
 
@@ -214,6 +235,8 @@ export class MaterialCategoryService {
     });
   }
 
+  // Retained as a safety net only — code is server-generated, so this can no
+  // longer fail in practice. The unique index remains the real guarantee.
   private async assertUniqueCode(
     organizationId: string,
     code: string,

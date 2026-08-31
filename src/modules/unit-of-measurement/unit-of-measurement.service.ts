@@ -5,6 +5,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, ILike } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { UnitOfMeasurement } from './entities/unit-of-measurement.entity';
+import {
+  MasterCodeService,
+  MasterSequenceKey,
+} from 'src/common/services/master-code.service';
 import { CreateUnitOfMeasurementDto } from './dto/create-unit-of-measurement.dto';
 import { UpdateUnitOfMeasurementDto } from './dto/update-unit-of-measurement.dto';
 import { UnitOfMeasurementQueryDto } from './dto/unit-of-measurement-query.dto';
@@ -22,6 +26,7 @@ export class UnitOfMeasurementService {
   constructor(
     @InjectRepository(UnitOfMeasurement)
     private readonly uomRepo: Repository<UnitOfMeasurement>,
+    private readonly masterCodeService: MasterCodeService,
   ) {}
 
   // ── Create ────────────────────────────────────────────────────────
@@ -31,20 +36,33 @@ export class UnitOfMeasurementService {
     dto: CreateUnitOfMeasurementDto,
     createdBy: string,
   ): Promise<UnitOfMeasurementResponseDto> {
-    await this.assertUniqueCode(organizationId, dto.code);
     await this.assertUniqueName(organizationId, dto.name);
 
-    const uom = this.uomRepo.create({
-      ...dto,
-      dguid:        uuidv4(),
+    const saved = await this.masterCodeService.withGeneratedCode(
       organizationId,
-      uomType:      dto.uomType      ?? UomType.OTHER,
-      isActive:     dto.isActive     ?? true,
-      displayOrder: dto.displayOrder ?? 0,
-      createdBy,
+      MasterSequenceKey.UNIT_OF_MEASUREMENT,
+      async (code, queryRunner) => {
+        const uom = queryRunner.manager.create(UnitOfMeasurement, {
+          ...dto,
+          dguid:        uuidv4(),
+          organizationId,
+          code,
+          uomType:      dto.uomType      ?? UomType.OTHER,
+          isActive:     dto.isActive     ?? true,
+          displayOrder: dto.displayOrder ?? 0,
+          createdBy,
+        });
+        return queryRunner.manager.save(UnitOfMeasurement, uom);
+      },
+    ).catch(err => {
+      if (err?.code === 'ER_DUP_ENTRY') {
+        throw new ConflictException(
+          'A Unit of Measurement with this code already exists in your organization',
+        );
+      }
+      throw err;
     });
 
-    const saved = await this.uomRepo.save(uom);
     return this.toResponse(await this.loadWithOrg(saved.id, organizationId));
   }
 
@@ -192,6 +210,8 @@ export class UnitOfMeasurementService {
     });
   }
 
+  // Retained as a safety net only — code is server-generated, so this can no
+  // longer fail in practice. The unique index remains the real guarantee.
   private async assertUniqueCode(
     organizationId: string,
     code: string,

@@ -6,6 +6,9 @@ import {
 import { Transform, Type } from 'class-transformer';
 
 export class CreateActivityDto {
+  // NOTE: `code` is absent by design — it is server-generated as a
+  // per-organization sequence starting at 0001. Supplying it has no effect.
+
   @ApiProperty({ example: 'uuid-dd', description: 'DepartmentDiscipline mapping UUID' })
   @IsUUID()
   @IsNotEmpty()
@@ -20,13 +23,6 @@ export class CreateActivityDto {
   @IsUUID()
   @IsNotEmpty()
   disciplineId: string;
-
-  @ApiProperty({ example: 'RFQ', description: 'Unique activity code within the DepartmentDiscipline (auto-uppercased)' })
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(30)
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
-  code: string;
 
   @ApiProperty({ example: 'Request for Quotation', description: 'Full activity name' })
   @IsString()
@@ -108,12 +104,8 @@ export class CreateActivityDto {
 // ── Bulk create ───────────────────────────────────────────────────────────────
 
 export class BulkActivityItemDto {
-  @ApiProperty({ example: 'RFQ' })
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(30)
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
-  code: string;
+  // `code` is server-generated per item, same sequence as single create.
+  // Duplicate detection for bulk therefore keys on NAME, not code.
 
   @ApiProperty({ example: 'Request for Quotation' })
   @IsString()

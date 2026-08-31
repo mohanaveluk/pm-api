@@ -1,6 +1,6 @@
 import {
   Entity, PrimaryGeneratedColumn, Column, CreateDateColumn,
-  UpdateDateColumn, Index, ManyToOne, JoinColumn,
+  UpdateDateColumn, Index, ManyToOne, OneToMany, JoinColumn,
 } from 'typeorm';
 import { Organization }       from '../../organization/entity/organization.entity';
 import { MaterialCategory }   from '../../material-category/entities/material-category.entity';
@@ -13,6 +13,7 @@ import { StockingStrategy }   from '../enums/stocking-strategy.enum';
 import { PackagingType }      from '../enums/packaging-type.enum';
 import { TransportationMode } from '../enums/transportation-mode.enum';
 import { HazardClassification } from '../enums/hazard-classification.enum';
+import { MaterialDocument }     from './material-document.entity';
 
 @Entity('materials')
 @Index('UQ_mat_org_code',       ['organizationId', 'code'],               { unique: true })
@@ -23,6 +24,7 @@ import { HazardClassification } from '../enums/hazard-classification.enum';
 @Index('IDX_mat_org_deleted',   ['organizationId', 'isDeleted'])
 @Index('IDX_mat_manufacturer',  ['organizationId', 'manufacturerName'])
 @Index('IDX_mat_short_desc',    ['organizationId', 'shortDescription'])
+@Index('IDX_mat_org_po_issued', ['organizationId', 'isPurchaseOrderIssued'])
 export class Material {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -110,6 +112,45 @@ export class Material {
 
   @Column({ type: 'text', nullable: true })
   remarks: string;
+
+  // ══ PURCHASE ORDER LOCK ═══════════════════════════════════════════
+  //
+  // Once a material has been committed to an issued and confirmed purchase
+  // order, its master data is frozen: the specification a supplier priced and
+  // is manufacturing against must not change underneath the order.
+  //
+  // Deliberately a PERSISTED FLAG rather than a live query against the
+  // purchase-order module:
+  //   - the check runs on every update/delete, and a cross-module count per
+  //     edit would be a needless round trip;
+  //   - the Purchase Order module does not exist yet, so there is nothing to
+  //     query — this column is the integration point it will set;
+  //   - the lock must survive PO archival. A material stays locked because an
+  //     order was once placed against it, not only while that order is open.
+  //
+  // Set through MaterialService.markPurchaseOrderIssued(); never patchable via
+  // the ordinary update endpoint.
+
+  @Column({ default: false })
+  isPurchaseOrderIssued: boolean;
+
+  @Column({ nullable: true, type: 'datetime' })
+  purchaseOrderIssuedAt: Date;
+
+  // Reference of the PO that first locked the material — so the 409 can say
+  // which order froze it rather than just refusing.
+  @Column({ length: 100, nullable: true })
+  purchaseOrderReference: string;
+
+  @Column({ length: 255, nullable: true })
+  purchaseOrderIssuedBy: string;
+
+  // ══ DOCUMENTS ═════════════════════════════════════════════════════
+  // Source of truth is the material_documents child table. Documents may be
+  // added even while the material is PO-locked, as new versions.
+
+  @OneToMany(() => MaterialDocument, d => d.material)
+  documents: MaterialDocument[];
 
   // ══ TECHNICAL SPECIFICATION ═══════════════════════════════════════
   // Generic technical attributes. A future MaterialTechnicalAttribute
@@ -343,6 +384,14 @@ export class Material {
   // JSON array of photo URLs (up to ~50 images)
   @Column({ type: 'json', nullable: true })
   photos: string[];
+
+  // NOTE on the URL columns above (datasheetUrl … photos):
+  // They are RETAINED but DEPRECATED. material_documents is now the source of
+  // truth; the service keeps these columns in sync as a denormalised
+  // projection of the current active document of each type, so existing
+  // consumers of the detail response keep working unchanged. Write through
+  // the document endpoints — writing these columns directly will be
+  // overwritten on the next document change.
 
   // ── Soft delete ───────────────────────────────────────────────────
 

@@ -5,6 +5,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, ILike } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { Department } from './entity/department.entity';
+import {
+  MasterCodeService,
+  MasterSequenceKey,
+} from 'src/common/services/master-code.service';
 import { CreateDepartmentDto } from './dto/create-department.dto';
 import { UpdateDepartmentDto } from './dto/update-department.dto';
 import { DepartmentQueryDto } from './dto/department-query.dto';
@@ -17,6 +21,7 @@ export class DepartmentService {
   constructor(
     @InjectRepository(Department)
     private readonly deptRepo: Repository<Department>,
+    private readonly masterCodeService: MasterCodeService,
   ) {}
 
   async create(
@@ -24,18 +29,33 @@ export class DepartmentService {
     dto: CreateDepartmentDto,
     createdBy: string,
   ): Promise<DepartmentResponseDto> {
-    await this.assertUniqueCode(organizationId, dto.code);
-
-    const dept = this.deptRepo.create({
-      ...dto,
-      dguid: uuidv4(),
+    // code is server-generated: a per-organization sequence starting at 0001.
+    // Generation and insert share one transaction, under a row lock on the
+    // counter, so concurrent creates cannot be handed the same number.
+    const saved = await this.masterCodeService.withGeneratedCode(
       organizationId,
-      isActive: dto.isActive ?? true,
-      displayOrder: dto.displayOrder ?? 0,
-      createdBy,
+      MasterSequenceKey.DEPARTMENT,
+      async (code, queryRunner) => {
+        const dept = queryRunner.manager.create(Department, {
+          ...dto,
+          dguid: uuidv4(),
+          organizationId,
+          code,
+          isActive: dto.isActive ?? true,
+          displayOrder: dto.displayOrder ?? 0,
+          createdBy,
+        });
+        return queryRunner.manager.save(Department, dept);
+      },
+    ).catch(err => {
+      if (err?.code === 'ER_DUP_ENTRY') {
+        throw new ConflictException(
+          'A Department with this code already exists in your organization',
+        );
+      }
+      throw err;
     });
 
-    const saved = await this.deptRepo.save(dept);
     return this.toResponse(saved);
   }
 
@@ -108,8 +128,10 @@ export class DepartmentService {
   ): Promise<DepartmentResponseDto> {
     const dept = await this.findActiveOrThrow(organizationId, id);
 
-    if (dto.code && dto.code !== dept.code) {
-      await this.assertUniqueCode(organizationId, dto.code, id);
+    // code is server-generated and immutable — the DTO no longer carries it,
+    // but guard here in case a caller bypasses DTO validation.
+    if ((dto as any).code !== undefined) {
+      throw new ConflictException('Department code is server-generated and cannot be changed');
     }
 
     Object.assign(dept, dto);
@@ -140,6 +162,8 @@ export class DepartmentService {
     return dept;
   }
 
+  // Retained as a safety net only — code is server-generated, so this can no
+  // longer fail in practice. The unique index remains the real guarantee.
   private async assertUniqueCode(
     organizationId: string,
     code: string,
@@ -158,8 +182,10 @@ export class DepartmentService {
       id:             dept.id,
       dguid:          dept.dguid,
       organizationId: dept.organizationId,
-      organizationName: dept.organization.organizationName,
-      organization:   {id: dept.organizationId, name: dept.organization.organizationName},
+      // Optional-chained: create/update/findOne load the department without the
+      // organization relation, so an unguarded dereference threw here.
+      organizationName: dept.organization?.organizationName ?? '',
+      organization:   {id: dept.organizationId, name: dept.organization?.organizationName},
       code:           dept.code,
       name:           dept.name,
       shortName:      dept.shortName,

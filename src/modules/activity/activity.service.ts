@@ -6,6 +6,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { Activity } from './entities/activity.entity';
+import {
+  MasterCodeService,
+  MasterSequenceKey,
+} from 'src/common/services/master-code.service';
 import { Department } from '../department/entity/department.entity';
 import { Discipline } from '../discipline/entity/discipline.entity';
 import { DepartmentDiscipline } from '../department-discipline/entities/department-discipline.entity';
@@ -39,6 +43,7 @@ export class ActivityService {
     @InjectRepository(DepartmentDiscipline)
     private readonly mappingRepo: Repository<DepartmentDiscipline>,
     private readonly dataSource: DataSource,
+    private readonly masterCodeService: MasterCodeService,
   ) {}
 
   // ── Create single ─────────────────────────────────────────────────
@@ -57,19 +62,23 @@ export class ActivityService {
       this.loadDiscipline(mapping.disciplineId),
     ]);
 
-    await Promise.all([
-      this.assertUniqueCode(organizationId, mapping.id, dto.code),
-      this.assertUniqueName(organizationId, mapping.id, dto.name),
-    ]);
+    await this.assertUniqueName(organizationId, mapping.id, dto.name);
 
     try {
-      const entity = this.activityRepo.create({
+      // code is server-generated: a per-organization sequence starting at 0001.
+      // Generation and insert share one transaction, under a row lock on the
+      // counter, so concurrent creates cannot be handed the same number.
+      const saved = await this.masterCodeService.withGeneratedCode(
+        organizationId,
+        MasterSequenceKey.ACTIVITY,
+        async (code, queryRunner) => {
+          const entity = queryRunner.manager.create(Activity, {
         dguid:                 uuidv4(),
         organizationId,
         departmentId:          mapping.departmentId,
         disciplineId:          mapping.disciplineId,
         departmentDisciplineId: mapping.id,
-        code:                  dto.code,
+        code,
         name:                  dto.name,
         shortName:             dto.shortName,
         description:           dto.description,
@@ -83,11 +92,14 @@ export class ActivityService {
         isDefault:             dto.isDefault ?? false,
         isActive:              dto.isActive ?? true,
         createdBy,
-      });
+          });
+          return queryRunner.manager.save(Activity, entity);
+        },
+      );
 
-      const saved = await this.activityRepo.save(entity);
       return this.toResponse(saved, dept, disc);
     } catch (err: any) {
+      if (err instanceof ConflictException || err instanceof NotFoundException) throw err;
       this.logger.error('Failed to create activity', err?.message);
       throw new InternalServerErrorException('Unable to create Activity');
     }
@@ -107,25 +119,39 @@ export class ActivityService {
       this.loadDiscipline(mapping.disciplineId),
     ]);
 
-    const incomingCodes = dto.activities.map(a => a.code);
+    // Codes are server-generated, so an incoming item can no longer collide by
+    // code — every one would get a fresh number. Duplicate detection therefore
+    // keys on NAME, which is the field that actually identifies an activity
+    // within a DepartmentDiscipline mapping.
+    const incomingNames = dto.activities.map(a => a.name.trim());
 
-    // Determine which codes already exist
     const existing = await this.activityRepo.find({
       where: {
         organizationId,
         departmentDisciplineId: mapping.id,
-        code: In(incomingCodes),
+        name: In(incomingNames),
         isDeleted: false,
       },
-      select: ['code'],
+      select: ['name'],
     });
-    const existingCodes = new Set(existing.map(a => a.code));
+    const existingNames = new Set(existing.map(a => a.name));
 
-    const toCreate = dto.activities.filter(a => !existingCodes.has(a.code));
-    const skippedCodes = incomingCodes.filter(c => existingCodes.has(c));
+    // Also de-duplicate within the payload itself: two items with the same
+    // name in one request would otherwise both be created.
+    const skippedNames: string[] = [];
+    const seen = new Set<string>();
+    const toCreate = dto.activities.filter(a => {
+      const name = a.name.trim();
+      if (existingNames.has(name) || seen.has(name)) {
+        skippedNames.push(name);
+        return false;
+      }
+      seen.add(name);
+      return true;
+    });
 
     if (toCreate.length === 0) {
-      return { created: [], skipped: skippedCodes.length, skippedCodes };
+      return { created: [], skipped: skippedNames.length, skippedNames };
     }
 
     const queryRunner = this.dataSource.createQueryRunner();
@@ -133,6 +159,18 @@ export class ActivityService {
     await queryRunner.startTransaction();
 
     try {
+      // One code per item, all drawn from the same locked counter inside this
+      // transaction — so a bulk create and a concurrent single create can never
+      // be handed the same number, and a rollback returns every number taken.
+      const codes: string[] = [];
+      for (let i = 0; i < toCreate.length; i++) {
+        codes.push(
+          await this.masterCodeService.generateCode(
+            queryRunner, organizationId, MasterSequenceKey.ACTIVITY,
+          ),
+        );
+      }
+
       const entities = toCreate.map((item: BulkActivityItemDto, idx: number) =>
         this.activityRepo.create({
           dguid:                  uuidv4(),
@@ -140,7 +178,7 @@ export class ActivityService {
           departmentId:           mapping.departmentId,
           disciplineId:           mapping.disciplineId,
           departmentDisciplineId: mapping.id,
-          code:                   item.code,
+          code:                   codes[idx],
           name:                   item.name.trim(),
           shortName:              item.shortName,
           description:            item.description,
@@ -161,8 +199,8 @@ export class ActivityService {
 
       return {
         created: saved.map(a => this.toResponse(a, dept, disc)),
-        skipped: skippedCodes.length,
-        skippedCodes,
+        skipped: skippedNames.length,
+        skippedNames,
       };
     } catch (err: any) {
       await queryRunner.rollbackTransaction();
@@ -293,8 +331,10 @@ export class ActivityService {
   ): Promise<ActivityResponseDto> {
     const activity = await this.findOrThrow(organizationId, id);
 
-    if (dto.code && dto.code !== activity.code) {
-      await this.assertUniqueCode(organizationId, activity.departmentDisciplineId, dto.code, id);
+    // code is server-generated and immutable — the DTO no longer carries it,
+    // but guard here in case a caller bypasses DTO validation.
+    if ((dto as any).code !== undefined) {
+      throw new ConflictException('Activity code is server-generated and cannot be changed');
     }
     if (dto.name && dto.name !== activity.name) {
       await this.assertUniqueName(organizationId, activity.departmentDisciplineId, dto.name, id);

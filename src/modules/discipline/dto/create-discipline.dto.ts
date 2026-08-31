@@ -4,11 +4,8 @@ import {
 } from 'class-validator';
 
 export class CreateDisciplineDto {
-  @ApiProperty({ example: 'ENG', description: 'Unique code within the organization (max 20 chars)' })
-  @IsString()
-  @IsNotEmpty()
-  @Length(1, 20)
-  code: string;
+  // NOTE: `code` is absent by design — it is server-generated as a
+  // per-organization sequence starting at 0001. Supplying it has no effect.
 
   @ApiProperty({ example: 'Engineering', description: 'Full discipline name' })
   @IsString()

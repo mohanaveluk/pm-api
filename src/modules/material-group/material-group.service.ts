@@ -5,6 +5,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, ILike } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { MaterialGroup } from './entities/material-group.entity';
+import {
+  MasterCodeService,
+  MasterSequenceKey,
+} from 'src/common/services/master-code.service';
 import { MaterialCategory } from '../material-category/entities/material-category.entity';
 import { CreateMaterialGroupDto } from './dto/create-material-group.dto';
 import { UpdateMaterialGroupDto } from './dto/update-material-group.dto';
@@ -24,6 +28,7 @@ export class MaterialGroupService {
     private readonly mgRepo: Repository<MaterialGroup>,
     @InjectRepository(MaterialCategory)
     private readonly mcRepo: Repository<MaterialCategory>,
+    private readonly masterCodeService: MasterCodeService,
   ) {}
 
   // ── Create ────────────────────────────────────────────────────────
@@ -34,20 +39,36 @@ export class MaterialGroupService {
     createdBy: string,
   ): Promise<MaterialGroupResponseDto> {
     await this.validateCategory(organizationId, dto.materialCategoryId);
-    await this.assertUniqueCode(organizationId, dto.materialCategoryId, dto.code);
     await this.assertUniqueName(organizationId, dto.materialCategoryId, dto.name);
 
-    const mg = this.mgRepo.create({
-      ...dto,
-      dguid:        uuidv4(),
+    // The sequence is per ORGANIZATION, not per category, so generated codes
+    // are unique organization-wide — comfortably stricter than the
+    // (organization, category, code) uniqueness the table enforces.
+    const saved = await this.masterCodeService.withGeneratedCode(
       organizationId,
-      isActive:     dto.isActive     ?? true,
-      isSystem:     dto.isSystem     ?? false,
-      displayOrder: dto.displayOrder ?? 0,
-      createdBy,
+      MasterSequenceKey.MATERIAL_GROUP,
+      async (code, queryRunner) => {
+        const mg = queryRunner.manager.create(MaterialGroup, {
+          ...dto,
+          dguid:        uuidv4(),
+          organizationId,
+          code,
+          isActive:     dto.isActive     ?? true,
+          isSystem:     dto.isSystem     ?? false,
+          displayOrder: dto.displayOrder ?? 0,
+          createdBy,
+        });
+        return queryRunner.manager.save(MaterialGroup, mg);
+      },
+    ).catch(err => {
+      if (err?.code === 'ER_DUP_ENTRY') {
+        throw new ConflictException(
+          'A Material Group with this code already exists in your organization',
+        );
+      }
+      throw err;
     });
 
-    const saved = await this.mgRepo.save(mg);
     return this.toResponse(await this.loadWithRelations(saved.id, organizationId));
   }
 
@@ -254,6 +275,8 @@ export class MaterialGroupService {
     }
   }
 
+  // Retained as a safety net only — code is server-generated, so this can no
+  // longer fail in practice. The unique index remains the real guarantee.
   private async assertUniqueCode(
     organizationId: string,
     materialCategoryId: string,
