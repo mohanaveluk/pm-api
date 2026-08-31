@@ -1,10 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
-  IsArray, IsBoolean, IsEnum, IsInt, IsNotEmpty, IsNumber,
+  ArrayMaxSize, IsArray, IsBoolean, IsEnum, IsInt, IsNotEmpty, IsNumber,
   IsOptional, IsString, IsUrl, IsUUID, Length, Max, Min,
   ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+import { MaterialDocumentInputDto } from './material-document.dto';
 import { CriticalityLevel }   from '../enums/criticality-level.enum';
 import { InspectionType }     from '../enums/inspection-type.enum';
 import { StockingStrategy }   from '../enums/stocking-strategy.enum';
@@ -478,9 +479,29 @@ export class CreateMaterialDto {
   @Type(() => MaterialLogisticsDto)
   logistics?: MaterialLogisticsDto;
 
-  @ApiPropertyOptional({ type: () => MaterialDocumentsDto })
+  @ApiPropertyOptional({
+    type: () => MaterialDocumentsDto,
+    description:
+      'LEGACY flat URL shape, still accepted. Each populated URL is converted into a ' +
+      'material_documents row at version 1; photos[] becomes one PHOTO row each. ' +
+      'Prefer documentList for new integrations — it carries type, title, and expiry.',
+  })
   @IsOptional()
   @ValidateNested()
   @Type(() => MaterialDocumentsDto)
   documents?: MaterialDocumentsDto;
+
+  @ApiPropertyOptional({
+    type: [MaterialDocumentInputDto],
+    description:
+      'Preferred document shape. Each entry becomes a material_documents row at ' +
+      'version 1. Can be combined with the legacy `documents` section — both are ' +
+      'normalised into the same table.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(200)
+  @ValidateNested({ each: true })
+  @Type(() => MaterialDocumentInputDto)
+  documentList?: MaterialDocumentInputDto[];
 }

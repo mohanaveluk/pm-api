@@ -27,7 +27,12 @@ export class DisciplineController {
   @Post()
   @Roles('OrganizationAdmin', 'SuperAdmin')
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Create a new discipline' })
+  @ApiOperation({
+    summary: 'Create a new discipline',
+    description:
+      'Code is server-generated as a per-organization sequence starting at 0001 ' +
+      'and is immutable thereafter. Any code supplied in the body is ignored.',
+  })
   @ApiBody({ type: CreateDisciplineDto })
   @ApiResponse({ status: 201, description: 'Discipline created', type: DisciplineResponseDto })
   @ApiResponse({ status: 409, description: 'Discipline code already exists in this organization' })

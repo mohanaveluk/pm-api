@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { MaterialStatus }     from '../enums/material-status.enum';
 import { CriticalityLevel }   from '../enums/criticality-level.enum';
+import { MaterialDocumentResponseDto } from './material-document.dto';
 
 export class MaterialDropdownDto {
   @ApiProperty() id: string;
@@ -11,6 +12,9 @@ export class MaterialDropdownDto {
   @ApiProperty() status: MaterialStatus;
   @ApiProperty() criticalityLevel: CriticalityLevel;
   @ApiProperty() isStockItem: boolean;
+  @ApiProperty({ description: "Frozen by an issued purchase order" }) isPurchaseOrderIssued: boolean;
+  @ApiProperty({ type: [MaterialDocumentResponseDto], description: "Current document versions" })
+  documents: MaterialDocumentResponseDto[];
 }
 
 export class MaterialListItemDto {
@@ -29,10 +33,14 @@ export class MaterialListItemDto {
   @ApiProperty() isStockItem: boolean;
   @ApiProperty() isSerialized: boolean;
   @ApiProperty() isBatchManaged: boolean;
+  @ApiProperty({ description: "Frozen by an issued purchase order" }) isPurchaseOrderIssued: boolean;
   @ApiPropertyOptional() manufacturerName?: string;
   @ApiPropertyOptional() modelPartNumber?: string;
   @ApiProperty() createdAt: Date;
   @ApiProperty() updatedAt: Date;
+
+  @ApiProperty({ type: [MaterialDocumentResponseDto], description: "Current document versions" })
+  documents: MaterialDocumentResponseDto[];
 
   // joined names for display
   @ApiPropertyOptional() materialCategoryName?: string;
@@ -139,7 +147,14 @@ export class MaterialResponseDto {
   @ApiPropertyOptional() specialTransportRequirements?: string;
   @ApiPropertyOptional() barcodeQrCodeRequired?: boolean;
 
-  // Documents
+  // Purchase-order lock
+  @ApiProperty({ description: "Frozen: update and delete refused; documents may still be added" }) isPurchaseOrderIssued: boolean;
+  @ApiPropertyOptional() purchaseOrderIssuedAt?: Date;
+  @ApiPropertyOptional({ example: "PO-2026-0451" }) purchaseOrderReference?: string;
+  @ApiPropertyOptional() purchaseOrderIssuedBy?: string;
+
+  // Documents — DEPRECATED flat projection of the current active document of
+  // each type. material_documents is the source of truth; read GET /materials/:id/documents.
   @ApiPropertyOptional() datasheetUrl?: string;
   @ApiPropertyOptional() drawingSketchUrl?: string;
   @ApiPropertyOptional() technicalSpecSheetUrl?: string;
@@ -148,6 +163,11 @@ export class MaterialResponseDto {
   @ApiPropertyOptional() vendorQuotationUrl?: string;
   @ApiPropertyOptional() inspectionReportsUrl?: string;
   @ApiPropertyOptional({ type: [String] }) photos?: string[];
+
+  // Documents — current versions from material_documents.
+  // Full version history: GET /materials/:id/documents?includeSuperseded=true
+  @ApiProperty({ type: [MaterialDocumentResponseDto] })
+  documents: MaterialDocumentResponseDto[];
 
   // Audit
   @ApiPropertyOptional() createdBy?: string;

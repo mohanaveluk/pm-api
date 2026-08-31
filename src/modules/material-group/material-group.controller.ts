@@ -37,7 +37,7 @@ export class MaterialGroupController {
     summary: 'Create a Material Group',
     description:
       'Creates a new material group under a parent Material Category, scoped to the ' +
-      'authenticated organization. Code is auto-uppercased and immutable after creation. ' +
+      'authenticated organization. Code is server-generated as a per-organization sequence starting at 0001 and is immutable. ' +
       'The parent category must be active.',
   })
   @ApiBody({ type: CreateMaterialGroupDto })

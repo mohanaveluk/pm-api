@@ -32,7 +32,12 @@ export class ActivityController {
   @Post()
   @Roles('OrganizationAdmin', 'SuperAdmin')
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Create a single Activity under a DepartmentDiscipline mapping' })
+  @ApiOperation({
+    summary: 'Create a single Activity under a DepartmentDiscipline mapping',
+    description:
+      'Code is server-generated as a per-organization sequence starting at 0001 ' +
+      'and is immutable thereafter. Any code supplied in the body is ignored.',
+  })
   @ApiBody({ type: CreateActivityDto })
   @ApiResponse({ status: 201, description: 'Activity created', type: ActivityResponseDto })
   @ApiResponse({ status: 400, description: 'Mapping inactive or departmentId/disciplineId inconsistent' })
@@ -52,7 +57,12 @@ export class ActivityController {
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Bulk create Activities under a DepartmentDiscipline mapping',
-    description: 'Creates multiple activities in a single transaction. Duplicate codes are skipped.',
+    description:
+      'Each activity gets a server-generated code from the same per-organization ' +
+      'sequence as single create. Duplicate detection keys on NAME (not code, which ' +
+      'is no longer client-supplied): items whose name already exists under the ' +
+      'mapping, or is repeated within the request, are reported in skippedNames. ' +
+      'All rows are created in a single transaction.',
   })
   @ApiBody({ type: BulkCreateActivityDto })
   @ApiResponse({ status: 201, description: 'Bulk activities created', type: BulkCreateActivityResultDto })

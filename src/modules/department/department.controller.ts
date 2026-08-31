@@ -27,7 +27,12 @@ export class DepartmentController {
   @Post()
   @Roles('OrganizationAdmin', 'SuperAdmin')
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Create a new department' })
+  @ApiOperation({
+    summary: 'Create a new department',
+    description:
+      'Code is server-generated as a per-organization sequence starting at 0001 ' +
+      'and is immutable thereafter. Any code supplied in the body is ignored.',
+  })
   @ApiBody({ type: CreateDepartmentDto })
   @ApiResponse({ status: 201, description: 'Department created', type: DepartmentResponseDto })
   @ApiResponse({ status: 409, description: 'Department code already exists in this organization' })

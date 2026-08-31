@@ -6,7 +6,6 @@ import {
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
-import { VendorType }           from '../enums/vendor-type.enum';
 import { VendorClassification } from '../enums/vendor-classification.enum';
 import { RiskCategory }         from '../enums/risk-category.enum';
 import { ReviewCycle }          from '../enums/review-cycle.enum';
@@ -534,12 +533,13 @@ export class CreateVendorDto {
   vendorName: string;
 
   @ApiProperty({
-    enum: VendorType,
-    example: VendorType.MANUFACTURER,
-    description: 'Controlled value — arbitrary strings are rejected',
+    example: 'uuid-of-vendor-type',
+    description:
+      'Vendor Type UUID (GET /vendor-types/active). Must exist, belong to this ' +
+      'organization, be active and not deleted.',
   })
-  @IsEnum(VendorType) @IsNotEmpty()
-  vendorType: VendorType;
+  @IsUUID() @IsNotEmpty()
+  vendorTypeId: string;
 
   @ApiProperty({
     example: 'uuid-of-industry-category',

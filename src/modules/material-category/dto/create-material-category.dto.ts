@@ -5,20 +5,8 @@ import {
 import { Transform } from 'class-transformer';
 
 export class CreateMaterialCategoryDto {
-  @ApiProperty({
-    example: 'RM',
-    description:
-      'Unique category code within the organization (1–30 chars, A-Z a-z 0-9 _ only). ' +
-      'Immutable after creation — referenced by Material Master, PR, PO, and ERP integrations.',
-  })
-  @IsString()
-  @IsNotEmpty()
-  @Length(1, 30)
-  @Matches(/^[A-Za-z0-9_]+$/, {
-    message: 'code may only contain letters, digits, and underscores (no spaces, hyphens, or special characters)',
-  })
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
-  code: string;
+  // NOTE: `code` is absent by design — it is server-generated as a
+  // per-organization sequence starting at 0001. Supplying it has no effect.
 
   @ApiProperty({ example: 'Raw Material', description: 'Full category name (unique within organization)' })
   @IsString()

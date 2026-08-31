@@ -38,7 +38,7 @@ export class UnitOfMeasurementController {
     summary: 'Create a Unit of Measurement',
     description:
       'Creates a new UOM master record scoped to the authenticated organization. ' +
-      'Code is auto-uppercased and immutable after creation. ' +
+      'Code is server-generated as a per-organization sequence starting at 0001 and is immutable. ' +
       'Both code and name must be unique within the organization.',
   })
   @ApiBody({ type: CreateUnitOfMeasurementDto })

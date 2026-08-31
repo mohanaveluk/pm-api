@@ -28,9 +28,9 @@ import { IndustryCategory }    from '../industry-category/entities/industry-cate
 import { MaterialCategory }    from '../material-category/entities/material-category.entity';
 import { Material }            from '../material/entities/material.entity';
 import { User }                from '../user/entity/user.entity';
+import { VendorType }          from '../vendor-type/entity/vendor-type.entity';
 
 import { CreateVendorDto } from './dto/create-vendor.dto';
-import { VendorType }   from './enums/vendor-type.enum';
 import { VendorStatus } from './enums/vendor-status.enum';
 import { PendingStatusChange }       from './enums/pending-status-change.enum';
 import { StatusChangeRequestType }   from './enums/status-change-request-type.enum';
@@ -42,6 +42,7 @@ const ORG_A = '11111111-1111-4111-8111-111111111111';
 const ORG_B = '22222222-2222-4222-8222-222222222222';
 const CATEGORY_ID = '33333333-3333-4333-8333-333333333333';
 const VENDOR_ID = '44444444-4444-4444-8444-444444444444';
+const VENDOR_TYPE_ID = '55555555-5555-4555-8555-555555555555';
 const USER = 'buyer@example.com';
 
 // Chainable query-builder double. Terminal methods are overridable per test.
@@ -83,10 +84,17 @@ function activeCategory(overrides: Partial<IndustryCategory> = {}) {
   } as IndustryCategory;
 }
 
+function activeVendorType(overrides: Partial<VendorType> = {}) {
+  return {
+    id: VENDOR_TYPE_ID, organizationId: ORG_A, name: 'Manufacturer', code: '0001',
+    isActive: true, isDeleted: false, ...overrides,
+  } as VendorType;
+}
+
 function existingVendor(overrides: Partial<Vendor> = {}) {
   return {
     id: VENDOR_ID, organizationId: ORG_A, code: 'CIV000001',
-    vendorName: 'ABC Engineering LLC', vendorType: VendorType.MANUFACTURER,
+    vendorName: 'ABC Engineering LLC', vendorTypeId: VENDOR_TYPE_ID,
     industryCategoryId: CATEGORY_ID, vendorStatus: VendorStatus.ACTIVE,
     isActive: true, isDeleted: false, parentCompanyId: null,
     ...overrides,
@@ -97,6 +105,7 @@ describe('VendorService', () => {
   let service: VendorService;
   let vendorRepo: any;
   let categoryRepo: any;
+  let vendorTypeRepo: any;
   let materialRepo: any;
   let bankRepo: any;
   let statusRequestRepo: any;
@@ -108,7 +117,7 @@ describe('VendorService', () => {
 
   const validDto = (): CreateVendorDto => ({
     vendorName: 'ABC Engineering LLC',
-    vendorType: VendorType.MANUFACTURER,
+    vendorTypeId: VENDOR_TYPE_ID,
     industryCategoryId: CATEGORY_ID,
   } as CreateVendorDto);
 
@@ -137,6 +146,7 @@ describe('VendorService', () => {
 
     vendorRepo   = makeRepo();
     categoryRepo = makeRepo();
+    vendorTypeRepo = makeRepo({ findOne: jest.fn(async () => activeVendorType()) });
     materialRepo = makeRepo();
     bankRepo     = makeRepo();
     statusRequestRepo = makeRepo();
@@ -161,6 +171,7 @@ describe('VendorService', () => {
         { provide: getRepositoryToken(VendorPerformance),   useValue: makeRepo() },
         { provide: getRepositoryToken(VendorStatusChangeRequest), useValue: statusRequestRepo },
         { provide: getRepositoryToken(IndustryCategory),    useValue: categoryRepo },
+        { provide: getRepositoryToken(VendorType),          useValue: vendorTypeRepo },
         { provide: getRepositoryToken(MaterialCategory),    useValue: makeRepo() },
         { provide: getRepositoryToken(Material),            useValue: materialRepo },
         { provide: getRepositoryToken(User),                useValue: userRepo },
@@ -1345,7 +1356,7 @@ describe('VendorCodeService', () => {
 describe('CreateVendorDto validation', () => {
   const base = {
     vendorName: 'ABC Engineering LLC',
-    vendorType: VendorType.MANUFACTURER,
+    vendorTypeId: VENDOR_TYPE_ID,
     industryCategoryId: CATEGORY_ID,
   };
 
@@ -1359,14 +1370,14 @@ describe('CreateVendorDto validation', () => {
     expect(await errorsFor({})).toHaveLength(0);
   });
 
-  it('requires vendorName, vendorType and industryCategoryId', async () => {
+  it('requires vendorName, vendorTypeId and industryCategoryId', async () => {
     const dto = plainToInstance(CreateVendorDto, {});
     const props = (await validate(dto)).map(e => e.property);
-    expect(props).toEqual(expect.arrayContaining(['vendorName', 'vendorType', 'industryCategoryId']));
+    expect(props).toEqual(expect.arrayContaining(['vendorName', 'vendorTypeId', 'industryCategoryId']));
   });
 
-  it('rejects an arbitrary vendorType string', async () => {
-    expect(await errorsFor({ vendorType: 'FABRICATOR' })).toContain('vendorType');
+  it('rejects a non-UUID vendorTypeId', async () => {
+    expect(await errorsFor({ vendorTypeId: 'FABRICATOR' })).toContain('vendorTypeId');
   });
 
   it('rejects a malformed email', async () => {

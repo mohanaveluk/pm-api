@@ -41,7 +41,13 @@ export class ActivityListResponseDto {
 export class BulkCreateActivityResultDto {
   @ApiProperty({ type: [ActivityResponseDto] }) created: ActivityResponseDto[];
   @ApiProperty() skipped: number;
-  @ApiProperty({ description: 'Activity codes that were skipped (already exist)' }) skippedCodes: string[];
+  @ApiProperty({
+    description:
+      'Activity NAMES that were skipped — either already present under this mapping, ' +
+      'or repeated within the request. Codes are server-generated, so they can no ' +
+      'longer be the duplicate key.',
+  })
+  skippedNames: string[];
 }
 
 export class ActivityDropdownItemDto {

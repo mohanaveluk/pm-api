@@ -70,17 +70,17 @@ export class VendorController {
       'UNDER_EVALUATION, INACTIVE, BLACKLISTED, or deleted are never returned.',
   })
   @ApiQuery({ name: 'industryCategoryId', required: false, description: 'Filter by Industry Category UUID' })
-  @ApiQuery({ name: 'vendorType',         required: false, description: 'Filter by vendor type' })
+  @ApiQuery({ name: 'vendorTypeId',       required: false, description: 'Filter by Vendor Type UUID' })
   @ApiResponse({ status: 200, description: 'Selectable vendors', type: [VendorDropdownDto] })
   async findActive(
     @Request() req,
     @Query('industryCategoryId') industryCategoryId?: string,
-    @Query('vendorType')         vendorType?: string,
+    @Query('vendorTypeId')       vendorTypeId?: string,
   ) {
     const data = await this.vendorService.findActive(
       req.user.organizationId,
       industryCategoryId,
-      vendorType,
+      vendorTypeId,
     );
     return ResponseDto.success(data);
   }
