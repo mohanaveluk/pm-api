@@ -36,6 +36,13 @@ import { PendingStatusChange }       from './enums/pending-status-change.enum';
 import { StatusChangeRequestType }   from './enums/status-change-request-type.enum';
 import { StatusChangeRequestStatus } from './enums/status-change-request-status.enum';
 import { VendorStatusChangeRequest } from './entities/vendor-status-change-request.entity';
+import { VendorProjectExperience }   from './entities/vendor-project-experience.entity';
+import { VendorProjectRole }   from './enums/vendor-project-role.enum';
+import { EvaluationStage }    from './enums/evaluation-stage.enum';
+import { EvaluationDecision } from './enums/evaluation-decision.enum';
+import { RiskCategory }         from './enums/risk-category.enum';
+import { VendorClassification } from './enums/vendor-classification.enum';
+import { VendorProjectStatus } from './enums/vendor-project-status.enum';
 import { EmailService } from 'src/shared/email/email.service';
 
 const ORG_A = '11111111-1111-4111-8111-111111111111';
@@ -109,6 +116,8 @@ describe('VendorService', () => {
   let materialRepo: any;
   let bankRepo: any;
   let statusRequestRepo: any;
+  let projectExperienceRepo: any;
+  let evaluationRepo: any;
   let userRepo: any;
   let emailService: any;
   let usageValidation: VendorUsageValidationService;
@@ -129,9 +138,12 @@ describe('VendorService', () => {
       rollbackTransaction:  jest.fn(),
       release:              jest.fn(),
       manager: {
-        create: jest.fn((_e: any, v: any) => v),
-        save:   jest.fn(async (_e: any, v: any) => v),
+        create:  jest.fn((_e: any, v: any) => v),
+        save:    jest.fn(async (_e: any, v: any) => v),
         findOne: jest.fn(async () => null),
+        find:    jest.fn(async () => []),
+        update:  jest.fn(async () => ({ affected: 1 })),
+        createQueryBuilder: jest.fn(() => makeQb()),
       },
     };
 
@@ -150,6 +162,8 @@ describe('VendorService', () => {
     materialRepo = makeRepo();
     bankRepo     = makeRepo();
     statusRequestRepo = makeRepo();
+    projectExperienceRepo = makeRepo();
+    evaluationRepo = makeRepo();
     userRepo     = makeRepo();
     emailService = { sendEmail: jest.fn(async () => true) };
 
@@ -167,9 +181,10 @@ describe('VendorService', () => {
         { provide: getRepositoryToken(VendorDocument),      useValue: makeRepo() },
         { provide: getRepositoryToken(VendorMaterial),      useValue: makeRepo() },
         { provide: getRepositoryToken(VendorTurnover),      useValue: makeRepo() },
-        { provide: getRepositoryToken(VendorEvaluation),    useValue: makeRepo() },
+        { provide: getRepositoryToken(VendorEvaluation),    useValue: evaluationRepo },
         { provide: getRepositoryToken(VendorPerformance),   useValue: makeRepo() },
         { provide: getRepositoryToken(VendorStatusChangeRequest), useValue: statusRequestRepo },
+        { provide: getRepositoryToken(VendorProjectExperience),   useValue: projectExperienceRepo },
         { provide: getRepositoryToken(IndustryCategory),    useValue: categoryRepo },
         { provide: getRepositoryToken(VendorType),          useValue: vendorTypeRepo },
         { provide: getRepositoryToken(MaterialCategory),    useValue: makeRepo() },
@@ -202,7 +217,7 @@ describe('VendorService', () => {
       await service.create(validDto(), ORG_A, USER);
 
       const vendorRow = saved.find(s => s.vendorName === 'ABC Engineering LLC');
-      expect(vendorRow.code).toBe('CIV000001');
+      expect(vendorRow.code).toBe('MAN000001');
       expect(vendorRow.organizationId).toBe(ORG_A);
       expect(vendorRow.createdBy).toBe(USER);
       expect(queryRunner.commitTransaction).toHaveBeenCalled();
@@ -211,7 +226,7 @@ describe('VendorService', () => {
 
     it('does NOT auto-approve a new vendor: status UNDER_EVALUATION, isActive false', async () => {
       categoryRepo.findOne.mockResolvedValue(activeCategory());
-      queryRunner.manager.findOne.mockResolvedValue({ categoryPrefix: 'CIV', lastSequence: 5 });
+      queryRunner.manager.findOne.mockResolvedValue({ categoryPrefix: 'MAN', lastSequence: 5 });
 
       const saved: any[] = [];
       queryRunner.manager.save.mockImplementation(async (_e: any, v: any) => { saved.push(v); return v; });
@@ -224,22 +239,22 @@ describe('VendorService', () => {
       expect(vendorRow.isActive).toBe(false);
     });
 
-    it('rejects a missing Industry Category with 404', async () => {
-      categoryRepo.findOne.mockResolvedValue(null);
+    it('rejects a missing Vendor Type with 404', async () => {
+      vendorTypeRepo.findOne.mockResolvedValue(null);
       await expect(service.create(validDto(), ORG_A, USER)).rejects.toThrow(NotFoundException);
       expect(dataSource.createQueryRunner).not.toHaveBeenCalled();
     });
 
-    it('rejects an inactive Industry Category with 409', async () => {
-      categoryRepo.findOne.mockResolvedValue(activeCategory({ isActive: false }));
+    it('rejects an inactive Vendor Type with 409', async () => {
+      vendorTypeRepo.findOne.mockResolvedValue(activeVendorType({ isActive: false }));
       await expect(service.create(validDto(), ORG_A, USER)).rejects.toThrow(ConflictException);
     });
 
-    it('rejects an Industry Category owned by another organization', async () => {
-      // The repository filters on organizationId, so a foreign category resolves to null.
-      categoryRepo.findOne.mockResolvedValue(null);
+    it('rejects a Vendor Type owned by another organization', async () => {
+      // The repository filters on organizationId, so a foreign row resolves to null.
+      vendorTypeRepo.findOne.mockResolvedValue(null);
       await expect(service.create(validDto(), ORG_B, USER)).rejects.toThrow(NotFoundException);
-      expect(categoryRepo.findOne).toHaveBeenCalledWith(
+      expect(vendorTypeRepo.findOne).toHaveBeenCalledWith(
         expect.objectContaining({ where: expect.objectContaining({ organizationId: ORG_B }) }),
       );
     });
@@ -274,7 +289,7 @@ describe('VendorService', () => {
 
     it('rolls the transaction back when persistence fails', async () => {
       categoryRepo.findOne.mockResolvedValue(activeCategory());
-      queryRunner.manager.findOne.mockResolvedValue({ categoryPrefix: 'CIV', lastSequence: 0 });
+      queryRunner.manager.findOne.mockResolvedValue({ categoryPrefix: 'MAN', lastSequence: 0 });
       queryRunner.manager.save.mockRejectedValue(new Error('db down'));
 
       await expect(service.create(validDto(), ORG_A, USER)).rejects.toThrow('db down');
@@ -449,6 +464,121 @@ describe('VendorService', () => {
     });
   });
 
+  // ══ Evaluation trail (write side) ═════════════════════════════════════
+
+  describe('addEvaluation', () => {
+    beforeEach(() => jest.spyOn(service, 'findOne').mockResolvedValue({} as any));
+
+    const evaluationDto = (overrides: Partial<Record<string, unknown>> = {}) => ({
+      stage: EvaluationStage.TECHNICAL,
+      decision: EvaluationDecision.SUBMITTED,
+      score: 78,
+      ...overrides,
+    } as any);
+
+    it('records a decision as an append-only row', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor({ vendorStatus: VendorStatus.UNDER_EVALUATION }));
+
+      await service.addEvaluation(VENDOR_ID, ORG_A, evaluationDto(), USER, 'Manager');
+
+      expect(evaluationRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          vendorId: VENDOR_ID, organizationId: ORG_A,
+          stage: EvaluationStage.TECHNICAL, decision: EvaluationDecision.SUBMITTED,
+          score: 78, evaluatedBy: USER,
+        }),
+      );
+    });
+
+    it('rejects a REJECTED decision with no comments', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor());
+      await expect(
+        service.addEvaluation(VENDOR_ID, ORG_A, evaluationDto({ decision: EvaluationDecision.REJECTED }), USER, 'Manager'),
+      ).rejects.toThrow(/Comments are required/);
+      expect(evaluationRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('rejects a RETURNED decision with no comments', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor());
+      await expect(
+        service.addEvaluation(VENDOR_ID, ORG_A, evaluationDto({ decision: EvaluationDecision.RETURNED }), USER, 'Manager'),
+      ).rejects.toThrow(/Comments are required/);
+    });
+
+    it('accepts REJECTED and RETURNED once a reason is supplied, without touching vendorStatus', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor({ vendorStatus: VendorStatus.UNDER_EVALUATION }));
+
+      await service.addEvaluation(
+        VENDOR_ID, ORG_A,
+        evaluationDto({ decision: EvaluationDecision.RETURNED, comments: 'Please provide the latest ISO 9001 certificate.' }),
+        USER, 'Manager',
+      );
+
+      expect(evaluationRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ decision: EvaluationDecision.RETURNED }),
+      );
+      // Only the score rollup should have saved the vendor — vendorStatus untouched.
+      expect(vendorRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ vendorStatus: VendorStatus.UNDER_EVALUATION }),
+      );
+    });
+
+    it('rolls the score, risk category and classification up onto the vendor when supplied', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor({ vendorStatus: VendorStatus.UNDER_EVALUATION }));
+
+      await service.addEvaluation(
+        VENDOR_ID, ORG_A,
+        evaluationDto({
+          score: 91, riskCategory: RiskCategory.LOW, vendorClassification: VendorClassification.APPROVED,
+        }),
+        USER, 'Manager',
+      );
+
+      expect(vendorRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          vendorEvaluationScore: 91, riskCategory: RiskCategory.LOW,
+          vendorClassification: VendorClassification.APPROVED,
+        }),
+      );
+    });
+
+    it('APPROVED activates the vendor via the same rules as enable()', async () => {
+      vendorRepo.findOne.mockResolvedValue(
+        existingVendor({ vendorStatus: VendorStatus.UNDER_EVALUATION, isActive: false }),
+      );
+
+      await service.addEvaluation(
+        VENDOR_ID, ORG_A,
+        evaluationDto({ stage: EvaluationStage.FINAL, decision: EvaluationDecision.APPROVED }),
+        USER, 'Manager',
+      );
+
+      expect(vendorRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ vendorStatus: VendorStatus.ACTIVE, isActive: true }),
+      );
+    });
+
+    it('refuses to approve a blacklisted vendor', async () => {
+      vendorRepo.findOne.mockResolvedValue(
+        existingVendor({ vendorStatus: VendorStatus.BLACKLISTED, isActive: false }),
+      );
+      await expect(
+        service.addEvaluation(
+          VENDOR_ID, ORG_A,
+          evaluationDto({ stage: EvaluationStage.FINAL, decision: EvaluationDecision.APPROVED }),
+          USER, 'Manager',
+        ),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('refuses cross-organization evaluation', async () => {
+      vendorRepo.findOne.mockResolvedValue(null);
+      await expect(
+        service.addEvaluation(VENDOR_ID, ORG_B, evaluationDto(), USER, 'Manager'),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
   // ══ Clone ══════════════════════════════════════════════════════════════
 
   describe('clone', () => {
@@ -492,7 +622,7 @@ describe('VendorService', () => {
       jest.spyOn(service, 'findOne').mockResolvedValue({} as any);
       categoryRepo.findOne.mockResolvedValue(activeCategory());
       // Counter sits at 7, so the clone takes CIV000008.
-      queryRunner.manager.findOne.mockResolvedValue({ categoryPrefix: 'CIV', lastSequence: 7 });
+      queryRunner.manager.findOne.mockResolvedValue({ categoryPrefix: 'MAN', lastSequence: 7 });
 
       txManager = queryRunner.manager;
       txManager.create = jest.fn((_e: any, v: any) => v);
@@ -516,7 +646,7 @@ describe('VendorService', () => {
 
       await service.clone(VENDOR_ID, ORG_A, CLONE_USER);
 
-      expect(savedVendor().code).toBe('CIV000008');
+      expect(savedVendor().code).toBe('MAN000008');
     });
 
     it('mints a new id and dguid', async () => {
@@ -724,9 +854,9 @@ describe('VendorService', () => {
       );
     });
 
-    it('refuses when the Industry Category has since been deactivated', async () => {
+    it('refuses when the Vendor Type has since been deactivated', async () => {
       vendorRepo.findOne.mockResolvedValue(fullSource());
-      categoryRepo.findOne.mockResolvedValue(activeCategory({ isActive: false }));
+      vendorTypeRepo.findOne.mockResolvedValue(activeVendorType({ isActive: false }));
 
       await expect(service.clone(VENDOR_ID, ORG_A, CLONE_USER)).rejects.toThrow(ConflictException);
       expect(dataSource.createQueryRunner).not.toHaveBeenCalled();
@@ -757,7 +887,7 @@ describe('VendorService', () => {
 
     it('issues distinct codes when the same vendor is cloned repeatedly', async () => {
       vendorRepo.findOne.mockResolvedValue(fullSource());
-      const counter = { categoryPrefix: 'CIV', lastSequence: 7 };
+      const counter = { categoryPrefix: 'MAN', lastSequence: 7 };
       queryRunner.manager.findOne.mockResolvedValue(counter);
       const codes: string[] = [];
       txManager.save = jest.fn(async (entity: any, rows: any) => {
@@ -770,7 +900,7 @@ describe('VendorService', () => {
       await service.clone(VENDOR_ID, ORG_A, CLONE_USER);
       await service.clone(VENDOR_ID, ORG_A, CLONE_USER);
 
-      expect(codes).toEqual(['CIV000008', 'CIV000009', 'CIV000010']);
+      expect(codes).toEqual(['MAN000008', 'MAN000009', 'MAN000010']);
     });
   });
 
@@ -1226,6 +1356,366 @@ describe('VendorService', () => {
       expect(clauses).toContain('v.isDeleted = false');
       expect(clauses).toContain('v.isActive = true');
       expect(clauses).toContain('v.vendorStatus = :status');
+    });
+  });
+
+  // ══ flattenDto must strip every child collection ══════════════════════
+  //
+  // Regression guard. A collection left in `core` is Object.assign'ed onto the
+  // Vendor entity; manager.save(Vendor) then treats that @OneToMany as the
+  // authoritative set and orphans the rows already in the table with
+  // UPDATE ... SET vendorId = NULL, which fails against a NOT NULL column and
+  // rolls the whole update back.
+
+  describe('flattenDto child-collection stripping', () => {
+    const CHILD_COLLECTIONS = [
+      'addresses', 'contacts', 'bankAccounts', 'certifications',
+      'documents', 'materials', 'turnovers', 'projectExperiences',
+    ];
+
+    it.each(CHILD_COLLECTIONS)('strips %s from the vendor row', (collection) => {
+      const flat = (service as any).flattenDto({
+        vendorName: 'ABC Engineering LLC',
+        [collection]: [{ some: 'row' }],
+      });
+
+      expect(flat).not.toHaveProperty(collection);
+      expect(flat.vendorName).toBe('ABC Engineering LLC');
+    });
+
+    it('strips all of them at once', () => {
+      const dto: Record<string, any> = { vendorName: 'ABC' };
+      CHILD_COLLECTIONS.forEach(c => (dto[c] = [{ some: 'row' }]));
+
+      const flat = (service as any).flattenDto(dto);
+
+      for (const c of CHILD_COLLECTIONS) {
+        expect(flat).not.toHaveProperty(c);
+      }
+    });
+
+    it('never assigns a child collection onto the entity handed to save()', async () => {
+      const vendor = existingVendor();
+      vendorRepo.findOne.mockResolvedValue(vendor);
+      jest.spyOn(service, 'findOne').mockResolvedValue({} as any);
+
+      await service.update(VENDOR_ID, {
+        vendorName: 'Renamed',
+        projectExperiences: [{ projectName: 'Project One' }],
+        addresses: [{ addressType: 'REGISTERED' }],
+      } as any, ORG_A, USER, 'SuperAdmin');
+
+      // The vendor instance persisted must carry no relation arrays, or TypeORM
+      // will try to orphan the existing child rows.
+      const savedVendor = queryRunner.manager.save.mock.calls
+        .find((c: any[]) => c[0] === Vendor)?.[1];
+
+      expect(savedVendor).toBeDefined();
+      expect(savedVendor).not.toHaveProperty('projectExperiences');
+      expect(savedVendor).not.toHaveProperty('addresses');
+      expect(savedVendor.vendorName).toBe('Renamed');
+    });
+
+    it('still routes the supplied project experience into its own table', async () => {
+      const vendor = existingVendor();
+      vendorRepo.findOne.mockResolvedValue(vendor);
+      jest.spyOn(service, 'findOne').mockResolvedValue({} as any);
+
+      await service.update(VENDOR_ID, {
+        projectExperiences: [{ projectName: 'Project One' }],
+      } as any, ORG_A, USER, 'SuperAdmin');
+
+      const wroteExperiences = queryRunner.manager.save.mock.calls
+        .some((c: any[]) => c[0] === VendorProjectExperience);
+      expect(wroteExperiences).toBe(true);
+    });
+  });
+
+  // ══ Project experience ════════════════════════════════════════════════════
+
+  describe('VendorService — project experience', () => {
+    const EXP_ID = '88888888-8888-4888-8888-888888888888';
+
+    const experienceRow = (overrides: Record<string, any> = {}): any => ({
+      id: EXP_ID,
+      dguid: 'exp-dguid',
+      vendorId: VENDOR_ID,
+      organizationId: ORG_A,
+      projectName: 'Jubail Refinery Expansion — Package 3',
+      clientName: 'Client A',
+      country: 'SA',
+      projectRole: VendorProjectRole.SUBCONTRACTOR,
+      projectStatus: VendorProjectStatus.COMPLETED,
+      startDate: new Date('2023-01-15'),
+      completionDate: new Date('2024-11-30'),
+      contractValue: 12500000,
+      currency: 'USD',
+      contractReference: 'CT-2023-0091',
+      purchaseOrderReference: 'PO-2023-0451',
+      completedOnTime: true,
+      wasBlacklisted: false,
+      isVerified: false,
+      displayOrder: 1,
+      isActive: true,
+      isDeleted: false,
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+      updatedAt: new Date('2026-01-01T00:00:00Z'),
+      ...overrides,
+    });
+
+    // ── Create ───────────────────────────────────────────────────────
+
+    describe('on vendor create', () => {
+      beforeEach(() => {
+        categoryRepo.findOne.mockResolvedValue(activeCategory());
+        queryRunner.manager.findOne.mockResolvedValue({ categoryPrefix: 'MAN', lastSequence: 0 });
+        jest.spyOn(service, 'findOne').mockResolvedValue({} as any);
+      });
+
+      it('persists every supplied project experience', async () => {
+        const saved: any[] = [];
+        queryRunner.manager.save.mockImplementation(async (e: any, v: any) => { saved.push({ entity: e, rows: v }); return v; });
+
+        await service.create({
+          ...validDto(),
+          projectExperiences: [
+            { projectName: 'Project One', clientName: 'Client A' },
+            { projectName: 'Project Two', clientName: 'Client B' },
+          ],
+        } as any, ORG_A, USER);
+
+        const rows = saved.find(s => s.entity === VendorProjectExperience)?.rows ?? [];
+        expect(rows).toHaveLength(2);
+        expect(rows.map((r: any) => r.projectName)).toEqual(['Project One', 'Project Two']);
+        expect(rows.every((r: any) => r.vendorId && r.organizationId === ORG_A)).toBe(true);
+        expect(rows.every((r: any) => r.dguid)).toBe(true);
+        expect(rows.every((r: any) => r.createdBy === USER)).toBe(true);
+      });
+
+      it('never accepts isVerified from the create payload', async () => {
+        const saved: any[] = [];
+        queryRunner.manager.save.mockImplementation(async (e: any, v: any) => { saved.push({ entity: e, rows: v }); return v; });
+
+        await service.create({
+          ...validDto(),
+          projectExperiences: [
+            { projectName: 'Project One', isVerified: true, verifiedBy: 'self@vendor.example' },
+          ],
+        } as any, ORG_A, USER);
+
+        const [row] = saved.find(s => s.entity === VendorProjectExperience)?.rows ?? [];
+        expect(row.isVerified).toBe(false);
+        expect(row.verifiedBy).toBeNull();
+        expect(row.verifiedAt).toBeNull();
+      });
+
+      it('writes nothing when no experience is supplied', async () => {
+        const saved: any[] = [];
+        queryRunner.manager.save.mockImplementation(async (e: any, v: any) => { saved.push({ entity: e, rows: v }); return v; });
+
+        await service.create(validDto(), ORG_A, USER);
+
+        expect(saved.some(s => s.entity === VendorProjectExperience)).toBe(false);
+      });
+    });
+
+    // ── Read ─────────────────────────────────────────────────────────
+
+    describe('findProjectExperiences', () => {
+      it('returns the vendor project experience', async () => {
+        vendorRepo.findOne.mockResolvedValue(existingVendor());
+        projectExperienceRepo.find.mockResolvedValue([experienceRow()]);
+
+        const result = await service.findProjectExperiences(VENDOR_ID, ORG_A);
+
+        expect(result).toHaveLength(1);
+        expect(result[0]).toMatchObject({
+          projectName: 'Jubail Refinery Expansion — Package 3',
+          clientName: 'Client A',
+          contractReference: 'CT-2023-0091',
+          purchaseOrderReference: 'PO-2023-0451',
+          isVerified: false,
+        });
+      });
+
+      it('derives duration in whole months from the two dates', async () => {
+        vendorRepo.findOne.mockResolvedValue(existingVendor());
+        projectExperienceRepo.find.mockResolvedValue([experienceRow()]);
+
+        const [row] = await service.findProjectExperiences(VENDOR_ID, ORG_A);
+
+        // 2023-01 → 2024-11 is 22 months.
+        expect(row.durationMonths).toBe(22);
+      });
+
+      it('leaves duration undefined when a date is missing', async () => {
+        vendorRepo.findOne.mockResolvedValue(existingVendor());
+        projectExperienceRepo.find.mockResolvedValue([experienceRow({ completionDate: null })]);
+
+        const [row] = await service.findProjectExperiences(VENDOR_ID, ORG_A);
+
+        expect(row.durationMonths).toBeUndefined();
+      });
+
+      it('filters to verified references when asked', async () => {
+        vendorRepo.findOne.mockResolvedValue(existingVendor());
+        projectExperienceRepo.find.mockResolvedValue([]);
+
+        await service.findProjectExperiences(VENDOR_ID, ORG_A, true);
+
+        expect(projectExperienceRepo.find).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({ isVerified: true }),
+          }),
+        );
+      });
+
+      it('returns all references by default', async () => {
+        vendorRepo.findOne.mockResolvedValue(existingVendor());
+        projectExperienceRepo.find.mockResolvedValue([]);
+
+        await service.findProjectExperiences(VENDOR_ID, ORG_A);
+
+        const { where } = projectExperienceRepo.find.mock.calls[0][0];
+        expect(where.isVerified).toBeUndefined();
+        expect(where).toMatchObject({ vendorId: VENDOR_ID, organizationId: ORG_A, isDeleted: false });
+      });
+
+      it('404s for a vendor in another organization', async () => {
+        vendorRepo.findOne.mockResolvedValue(null);
+        await expect(service.findProjectExperiences(VENDOR_ID, ORG_B))
+          .rejects.toThrow(NotFoundException);
+      });
+    });
+
+    // ── Append ───────────────────────────────────────────────────────
+
+    describe('addProjectExperience', () => {
+      it('appends one row scoped to the vendor and organization', async () => {
+        vendorRepo.findOne.mockResolvedValue(existingVendor());
+
+        const result = await service.addProjectExperience(
+          VENDOR_ID, ORG_A, { projectName: 'New Project', clientName: 'Client C' } as any, USER,
+        );
+
+        expect(projectExperienceRepo.save).toHaveBeenCalled();
+        expect(result.projectName).toBe('New Project');
+        const [row] = projectExperienceRepo.save.mock.calls[0];
+        expect(row.vendorId).toBe(VENDOR_ID);
+        expect(row.organizationId).toBe(ORG_A);
+        expect(row.createdBy).toBe(USER);
+      });
+
+      it('forces the new row unverified regardless of the payload', async () => {
+        vendorRepo.findOne.mockResolvedValue(existingVendor());
+
+        await service.addProjectExperience(
+          VENDOR_ID, ORG_A, { projectName: 'X', isVerified: true } as any, USER,
+        );
+
+        const [row] = projectExperienceRepo.save.mock.calls[0];
+        expect(row.isVerified).toBe(false);
+      });
+
+      it('404s for a vendor in another organization', async () => {
+        vendorRepo.findOne.mockResolvedValue(null);
+        await expect(service.addProjectExperience(
+          VENDOR_ID, ORG_B, { projectName: 'X' } as any, USER,
+        )).rejects.toThrow(NotFoundException);
+      });
+    });
+
+    // ── Verify ───────────────────────────────────────────────────────
+
+    describe('verifyProjectExperience', () => {
+      it('records who verified it and when', async () => {
+        const row = experienceRow();
+        vendorRepo.findOne.mockResolvedValue(existingVendor());
+        projectExperienceRepo.findOne.mockResolvedValue(row);
+
+        const result = await service.verifyProjectExperience(
+          VENDOR_ID, EXP_ID, ORG_A, { verificationRemarks: 'Confirmed with client' }, 'buyer@example.com',
+        );
+
+        expect(result.isVerified).toBe(true);
+        expect(row.verifiedBy).toBe('buyer@example.com');
+        expect(row.verifiedAt).toBeInstanceOf(Date);
+        expect(row.verificationRemarks).toBe('Confirmed with client');
+      });
+
+      it('refuses to verify twice', async () => {
+        vendorRepo.findOne.mockResolvedValue(existingVendor());
+        projectExperienceRepo.findOne.mockResolvedValue(experienceRow({ isVerified: true }));
+
+        await expect(service.verifyProjectExperience(
+          VENDOR_ID, EXP_ID, ORG_A, {}, USER,
+        )).rejects.toThrow(ConflictException);
+      });
+
+      it('404s for an experience that belongs to another vendor', async () => {
+        vendorRepo.findOne.mockResolvedValue(existingVendor());
+        projectExperienceRepo.findOne.mockResolvedValue(null);
+
+        await expect(service.verifyProjectExperience(
+          VENDOR_ID, EXP_ID, ORG_A, {}, USER,
+        )).rejects.toThrow(NotFoundException);
+      });
+    });
+
+    // ── Delete ───────────────────────────────────────────────────────
+
+    describe('removeProjectExperience', () => {
+      it('soft-deletes and deactivates the row', async () => {
+        const row = experienceRow();
+        vendorRepo.findOne.mockResolvedValue(existingVendor());
+        projectExperienceRepo.findOne.mockResolvedValue(row);
+
+        await service.removeProjectExperience(VENDOR_ID, EXP_ID, ORG_A, USER);
+
+        expect(row.isDeleted).toBe(true);
+        expect(row.isActive).toBe(false);
+        expect(row.deletedBy).toBe(USER);
+      });
+
+      it('404s for an unknown experience', async () => {
+        vendorRepo.findOne.mockResolvedValue(existingVendor());
+        projectExperienceRepo.findOne.mockResolvedValue(null);
+
+        await expect(service.removeProjectExperience(VENDOR_ID, EXP_ID, ORG_A, USER))
+          .rejects.toThrow(NotFoundException);
+      });
+    });
+
+    // ── Clone ────────────────────────────────────────────────────────
+
+    describe('on vendor clone', () => {
+      it('copies project experience but resets verification', async () => {
+        categoryRepo.findOne.mockResolvedValue(activeCategory());
+        vendorRepo.findOne.mockResolvedValue(existingVendor({ code: 'CIV000007' } as any));
+        queryRunner.manager.findOne.mockResolvedValue({ categoryPrefix: 'MAN', lastSequence: 7 });
+        jest.spyOn(service, 'findOne').mockResolvedValue({} as any);
+
+        const saved: any[] = [];
+        queryRunner.manager.save.mockImplementation(async (e: any, v: any) => { saved.push({ entity: e, rows: v }); return v; });
+        queryRunner.manager.find.mockImplementation(async (entity: any) =>
+          entity === VendorProjectExperience
+            ? [experienceRow({ isVerified: true, verifiedBy: 'someone@example.com' })]
+            : [],
+        );
+        queryRunner.manager.createQueryBuilder = jest.fn(() =>
+          makeQb({ getMany: jest.fn(async () => []) }),
+        );
+
+        await service.clone(VENDOR_ID, ORG_A, USER);
+
+        const rows = saved.find(s => s.entity === VendorProjectExperience)?.rows ?? [];
+        expect(rows).toHaveLength(1);
+        expect(rows[0].projectName).toBe('Jubail Refinery Expansion — Package 3');
+        // The verification was performed against the SOURCE vendor.
+        expect(rows[0].isVerified).toBe(false);
+        expect(rows[0].verifiedBy).toBeNull();
+        expect(rows[0].id).not.toBe(EXP_ID);
+      });
     });
   });
 });

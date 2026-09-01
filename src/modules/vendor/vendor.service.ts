@@ -23,6 +23,7 @@ import { VendorTurnover }      from './entities/vendor-turnover.entity';
 import { VendorEvaluation }    from './entities/vendor-evaluation.entity';
 import { VendorPerformance }   from './entities/vendor-performance.entity';
 import { VendorStatusChangeRequest } from './entities/vendor-status-change-request.entity';
+import { VendorProjectExperience }   from './entities/vendor-project-experience.entity';
 
 import { IndustryCategory } from '../industry-category/entities/industry-category.entity';
 import { VendorType }       from '../vendor-type/entity/vendor-type.entity';
@@ -52,6 +53,12 @@ import {
   VendorTurnoverResponseDto,
 } from './dto/vendor-response.dto';
 import {
+  VendorProjectExperienceDto,
+  VendorProjectExperienceResponseDto,
+  VerifyProjectExperienceDto,
+} from './dto/vendor-project-experience.dto';
+import { AddVendorEvaluationDto } from './dto/vendor-evaluation.dto';
+import {
   DecideVendorStatusChangeDto,
   RequestVendorStatusChangeDto,
   VendorStatusChangeAcceptedDto,
@@ -59,6 +66,7 @@ import {
 } from './dto/vendor-status-change.dto';
 
 import { VendorStatus }              from './enums/vendor-status.enum';
+import { EvaluationDecision }        from './enums/evaluation-decision.enum';
 import { PendingStatusChange }       from './enums/pending-status-change.enum';
 import { StatusChangeRequestType }   from './enums/status-change-request-type.enum';
 import { StatusChangeRequestStatus } from './enums/status-change-request-status.enum';
@@ -115,6 +123,8 @@ export class VendorService {
     private readonly performanceRepo: Repository<VendorPerformance>,
     @InjectRepository(VendorStatusChangeRequest)
     private readonly statusRequestRepo: Repository<VendorStatusChangeRequest>,
+    @InjectRepository(VendorProjectExperience)
+    private readonly projectExperienceRepo: Repository<VendorProjectExperience>,
     @InjectRepository(IndustryCategory)
     private readonly industryCategoryRepo: Repository<IndustryCategory>,
     @InjectRepository(VendorType)
@@ -429,6 +439,70 @@ export class VendorService {
     };
   }
 
+  private toProjectExperienceResponse(
+    e: VendorProjectExperience,
+  ): VendorProjectExperienceResponseDto {
+    // Derived rather than stored: recomputing from the two dates cannot drift.
+    let durationMonths: number;
+    if (e.startDate && e.completionDate) {
+      const start = new Date(e.startDate);
+      const end   = new Date(e.completionDate);
+      durationMonths = Math.max(
+        0,
+        (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth()),
+      );
+    }
+
+    return {
+      id:                  e.id,
+      dguid:               e.dguid,
+      vendorId:            e.vendorId,
+      projectName:         e.projectName,
+      clientName:          e.clientName,
+      projectExperience:   e.projectExperience,
+      pastPoContractReferences: e.pastPoContractReferences,
+      blacklistingHistory: e.blacklistingHistory,
+      clientContactPerson: e.clientContactPerson,
+      clientContactEmail:  e.clientContactEmail,
+      clientContactPhone:  e.clientContactPhone,
+      projectLocation:     e.projectLocation,
+      country:             e.country,
+      projectRole:         e.projectRole,
+      scopeOfWork:         e.scopeOfWork,
+      sector:              e.sector,
+      technologiesUsed:    e.technologiesUsed,
+      startDate:           e.startDate,
+      completionDate:      e.completionDate,
+      projectStatus:       e.projectStatus,
+      completionPercentage: e.completionPercentage,
+      durationMonths,
+      contractValue:       e.contractValue,
+      currency:            e.currency,
+      contractReference:   e.contractReference,
+      purchaseOrderReference: e.purchaseOrderReference,
+      completedOnTime:     e.completedOnTime,
+      clientPerformanceRating: e.clientPerformanceRating,
+      wasBlacklisted:      e.wasBlacklisted,
+      blacklistingRemarks: e.blacklistingRemarks,
+      keyAchievements:     e.keyAchievements,
+      challengesFaced:     e.challengesFaced,
+      completionCertificateUrl: e.completionCertificateUrl,
+      referenceLetterUrl:  e.referenceLetterUrl,
+      supportingDocumentUrls: e.supportingDocumentUrls,
+      isVerified:          e.isVerified,
+      verifiedBy:          e.verifiedBy,
+      verifiedAt:          e.verifiedAt,
+      verificationRemarks: e.verificationRemarks,
+      displayOrder:        e.displayOrder,
+      isActive:            e.isActive,
+      remarks:             e.remarks,
+      createdBy:           e.createdBy,
+      updatedBy:           e.updatedBy,
+      createdAt:           e.createdAt,
+      updatedAt:           e.updatedAt,
+    };
+  }
+
   private toTurnoverResponse(t: VendorTurnover): VendorTurnoverResponseDto {
     return {
       id:                    t.id,
@@ -451,8 +525,8 @@ export class VendorService {
       vendorTypeName:       v.vendorType?.name,
       vendorStatus:         v.vendorStatus,
       isActive:             v.isActive,
-      industryCategoryId:   v.industryCategoryId,
-      industryCategoryName: v.industryCategory?.name,
+      //industryCategoryId:   v.industryCategoryId,
+      //industryCategoryName: v.industryCategory?.name,
       productCategories:    v.productCategories,
       parentCompanyId:      v.parentCompanyId,
       parentCompanyName:    v.parentCompany?.vendorName,
@@ -496,7 +570,7 @@ export class VendorService {
     if (query.taxRegistrationNumber) {
       qb.andWhere('v.taxRegistrationNumber = :trn', { trn: query.taxRegistrationNumber });
     }
-    if (query.industryCategoryId)   qb.andWhere('v.industryCategoryId = :icId',  { icId: query.industryCategoryId });
+    //if (query.industryCategoryId)   qb.andWhere('v.industryCategoryId = :icId',  { icId: query.industryCategoryId });
     if (query.parentCompanyId)      qb.andWhere('v.parentCompanyId = :pcId',     { pcId: query.parentCompanyId });
     if (query.vendorTypeId)         qb.andWhere('v.vendorTypeId = :vTypeId',     { vTypeId: query.vendorTypeId });
     if (query.vendorStatus)         qb.andWhere('v.vendorStatus = :vStatus',     { vStatus: query.vendorStatus });
@@ -523,8 +597,9 @@ export class VendorService {
   ): Promise<VendorResponseDto> {
     // Validate everything that can be checked without a transaction first, so
     // we never open one only to roll it straight back.
-    const category = await this.validateIndustryCategory(organizationId, dto.industryCategoryId);
-    await this.validateVendorType(organizationId, dto.vendorTypeId);
+    
+    //await this.validateVendorType(organizationId, dto.vendorTypeId);
+    const category = await this.validateVendorType(organizationId, dto.vendorTypeId);
 
     if (dto.parentCompanyId) {
       await this.validateParentCompany(organizationId, dto.parentCompanyId);
@@ -560,7 +635,7 @@ export class VendorService {
         dguid: uuidv4(),
         organizationId,
         code,
-        industryCategoryId: dto.industryCategoryId,
+        industryCategoryId: dto.industryCategoryId ?? null,
 
         // A newly created vendor is never automatically approved: it enters the
         // qualification pipeline and is unavailable to transactions until an
@@ -666,6 +741,21 @@ export class VendorService {
         manager.create(VendorTurnover, { ...t, ...base, dguid: uuidv4() }),
       ));
     }
+
+    if (dto.projectExperiences?.length) {
+      // isVerified is NOT taken from the payload — a vendor cannot mark its own
+      // claims as confirmed. Verification is a separate, authorised action.
+      await manager.save(VendorProjectExperience, dto.projectExperiences.map(e =>
+        manager.create(VendorProjectExperience, {
+          ...e,
+          ...base,
+          dguid:      uuidv4(),
+          isVerified: false,
+          verifiedBy: null,
+          verifiedAt: null,
+        }),
+      ));
+    }
   }
 
   // ══ Clone ═════════════════════════════════════════════════════════════
@@ -703,8 +793,8 @@ export class VendorService {
     // Same validation as create(): a new vendor must not be created under an
     // Industry Category that has since been deactivated. Also yields the name
     // the code prefix is derived from.
-    const category = await this.validateIndustryCategory(organizationId, source.industryCategoryId);
-    await this.validateVendorType(organizationId, source.vendorTypeId);
+    const category = await this.validateVendorType(organizationId, source.vendorTypeId);
+    //await this.validateVendorType(organizationId, source.vendorTypeId);
 
     const vendorName = dto.vendorName
       ?? await this.deriveUniqueVendorName(organizationId, source.vendorName);
@@ -778,7 +868,7 @@ export class VendorService {
       return this.findOne(cloneId, organizationId, userEmail, /* role */ '');
     } catch (err) {
       await queryRunner.rollbackTransaction();
-      if (err?.code === 'ER_DUP_ENTRY') {
+      if ((err as any)?.code === 'ER_DUP_ENTRY') {
         throw new ConflictException(
           'A conflicting vendor record already exists in your organization',
         );
@@ -863,13 +953,14 @@ export class VendorService {
       .andWhere('b.isDeleted = false')
       .getMany();
 
-    const [addresses, contacts, certifications, documents, materials, turnovers] = await Promise.all([
+    const [addresses, contacts, certifications, documents, materials, turnovers, projectExperiences] = await Promise.all([
       manager.find(VendorAddress,       { where: scope }),
       manager.find(VendorContact,       { where: scope }),
       manager.find(VendorCertification, { where: scope }),
       manager.find(VendorDocument,      { where: scope }),
       manager.find(VendorMaterial,      { where: scope }),
       manager.find(VendorTurnover,      { where: scope }),
+      manager.find(VendorProjectExperience, { where: scope }),
     ]);
 
     await copyCollection(VendorAddress,       addresses);
@@ -878,6 +969,20 @@ export class VendorService {
     await copyCollection(VendorCertification, certifications);
     await copyCollection(VendorMaterial,      materials);
     await copyCollection(VendorTurnover,      turnovers);
+
+    // Project experience copies across, but the clone starts UNVERIFIED: the
+    // verification was performed against the source vendor record, not this one.
+    if (projectExperiences.length) {
+      await manager.save(VendorProjectExperience, projectExperiences.map(e =>
+        manager.create(VendorProjectExperience, {
+          ...rekey(e),
+          isVerified:          false,
+          verifiedBy:          null,
+          verifiedAt:          null,
+          verificationRemarks: null,
+        }),
+      ));
+    }
 
     // Documents keep their own version chain. supersedesId points at a row in
     // the SOURCE vendor's chain, so it is dropped and each cloned document
@@ -896,9 +1001,16 @@ export class VendorService {
   // Flattens the grouped optional sections onto the vendor row, mirroring
   // MaterialService.flattenDto.
   private flattenDto(dto: CreateVendorDto | UpdateVendorDto): Partial<Vendor> {
+    // EVERY child collection must be listed here. A collection left in `core`
+    // gets Object.assign'ed onto the Vendor entity, and manager.save(Vendor)
+    // then treats that @OneToMany as authoritative: rows already in the table
+    // but absent from the assigned array are "orphaned", which TypeORM performs
+    // as UPDATE ... SET vendorId = NULL. The column is NOT NULL, so the write
+    // fails and the whole update rolls back.
     const {
       statutory, commercial, technical, qualityHse, experience, logistics, evaluation,
       addresses, contacts, bankAccounts, certifications, documents, materials, turnovers,
+      projectExperiences,
       ...core
     } = dto as any;
 
@@ -943,7 +1055,7 @@ export class VendorService {
     const safeSortBy = ALLOWED_SORT_FIELDS.has(sortBy) ? sortBy : 'createdAt';
 
     const qb = this.vendorRepo.createQueryBuilder('v')
-      .leftJoinAndSelect('v.industryCategory', 'industryCategory')
+      //.leftJoinAndSelect('v.industryCategory', 'industryCategory')
       .leftJoinAndSelect('v.parentCompany',    'parentCompany')
       .leftJoinAndSelect('v.vendorType',       'vendorType')
       .where('v.organizationId = :organizationId', { organizationId })
@@ -996,7 +1108,7 @@ export class VendorService {
       vendorTypeName:       v.vendorType?.name,
       vendorStatus:         v.vendorStatus,
       vendorClassification: v.vendorClassification,
-      industryCategoryId:   v.industryCategoryId,
+      //industryCategoryId:   v.industryCategoryId,
     }));
   }
 
@@ -1007,14 +1119,14 @@ export class VendorService {
     role: string,
   ): Promise<VendorResponseDto> {
     const vendor = await this.findVendorOrThrow(id, organizationId, [
-      'industryCategory', 'parentCompany', 'vendorType',
-    ]);
+      'parentCompany', 'vendorType',
+    ]); //industryCategory
 
     const reveal = this.canViewSensitive(role);
 
     // Children are loaded separately so the bank query can opt into the
     // { select: false } columns only when the caller is authorised.
-    const [contacts, addresses, banks, certs, docs, mats, turnovers] = await Promise.all([
+    const [contacts, addresses, banks, certs, docs, mats, turnovers, experiences] = await Promise.all([
       this.contactRepo.find({ where: { vendorId: id, organizationId, isDeleted: false }, order: { isPrimary: 'DESC', contactPerson: 'ASC' } }),
       this.addressRepo.find({ where: { vendorId: id, organizationId, isDeleted: false }, order: { isPrimary: 'DESC', addressType: 'ASC' } }),
       this.loadBankAccounts(id, organizationId, reveal),
@@ -1022,6 +1134,7 @@ export class VendorService {
       this.documentRepo.find({ where: { vendorId: id, organizationId, isDeleted: false }, order: { documentType: 'ASC', version: 'DESC' } }),
       this.vendorMaterialRepo.find({ where: { vendorId: id, organizationId, isDeleted: false }, relations: ['material'] }),
       this.turnoverRepo.find({ where: { vendorId: id, organizationId, isDeleted: false }, order: { financialYear: 'DESC' } }),
+      this.projectExperienceRepo.find({ where: { vendorId: id, organizationId, isDeleted: false }, order: { displayOrder: 'ASC', completionDate: 'DESC' } }),
     ]);
 
     return {
@@ -1033,6 +1146,7 @@ export class VendorService {
       documents:      docs.map(d => this.toDocumentResponse(d)),
       materials:      mats.map(m => this.toVendorMaterialResponse(m)),
       turnovers:      turnovers.map(t => this.toTurnoverResponse(t)),
+      projectExperiences: experiences.map(e => this.toProjectExperienceResponse(e)),
     };
   }
 
@@ -1130,6 +1244,108 @@ export class VendorService {
     return rows.map(m => this.toVendorMaterialResponse(m));
   }
 
+  // ══ Project experience ════════════════════════════════════════════════
+
+  async findProjectExperiences(
+    id: string,
+    organizationId: string,
+    verifiedOnly = false,
+  ): Promise<VendorProjectExperienceResponseDto[]> {
+    await this.findVendorOrThrow(id, organizationId);
+
+    const where: Record<string, any> = { vendorId: id, organizationId, isDeleted: false };
+    // Bid evaluation should be able to ask for confirmed references only.
+    if (verifiedOnly) where.isVerified = true;
+
+    const rows = await this.projectExperienceRepo.find({
+      where,
+      order: { displayOrder: 'ASC', completionDate: 'DESC' },
+    });
+    return rows.map(e => this.toProjectExperienceResponse(e));
+  }
+
+  // Appends one project to an existing vendor without replacing the rest —
+  // the update endpoint swaps the whole collection, which is wrong when a
+  // vendor is simply adding one more reference.
+  async addProjectExperience(
+    id: string,
+    organizationId: string,
+    dto: VendorProjectExperienceDto,
+    userEmail: string,
+  ): Promise<VendorProjectExperienceResponseDto> {
+    await this.findVendorOrThrow(id, organizationId);
+
+    const row = this.projectExperienceRepo.create({
+      ...dto,
+      id:    uuidv4(),
+      dguid: uuidv4(),
+      vendorId: id,
+      organizationId,
+      // Never trusted from the payload — see verifyProjectExperience().
+      isVerified: false,
+      verifiedBy: null,
+      verifiedAt: null,
+      createdBy: userEmail,
+      updatedBy: userEmail,
+    });
+    await this.projectExperienceRepo.save(row);
+
+    return this.toProjectExperienceResponse(row);
+  }
+
+  // Marks a claimed reference as confirmed by procurement. Deliberately a
+  // separate, role-gated action: a vendor supplying its own experience must not
+  // be able to declare it verified.
+  async verifyProjectExperience(
+    id: string,
+    experienceId: string,
+    organizationId: string,
+    dto: VerifyProjectExperienceDto,
+    userEmail: string,
+  ): Promise<VendorProjectExperienceResponseDto> {
+    await this.findVendorOrThrow(id, organizationId);
+
+    const row = await this.projectExperienceRepo.findOne({
+      where: { id: experienceId, vendorId: id, organizationId, isDeleted: false },
+    });
+    if (!row) throw new NotFoundException('Project experience not found on this vendor');
+
+    if (row.isVerified) {
+      throw new ConflictException('This project experience has already been verified');
+    }
+
+    row.isVerified          = true;
+    row.verifiedBy          = userEmail;
+    row.verifiedAt          = new Date();
+    row.verificationRemarks = dto.verificationRemarks ?? null;
+    row.updatedBy           = userEmail;
+    await this.projectExperienceRepo.save(row);
+
+    this.logger.log(`Project experience ${experienceId} verified by ${userEmail}`);
+    return this.toProjectExperienceResponse(row);
+  }
+
+  async removeProjectExperience(
+    id: string,
+    experienceId: string,
+    organizationId: string,
+    userEmail: string,
+  ): Promise<void> {
+    await this.findVendorOrThrow(id, organizationId);
+
+    const row = await this.projectExperienceRepo.findOne({
+      where: { id: experienceId, vendorId: id, organizationId, isDeleted: false },
+    });
+    if (!row) throw new NotFoundException('Project experience not found on this vendor');
+
+    row.isDeleted = true;
+    row.deletedAt = new Date();
+    row.deletedBy = userEmail;
+    row.isActive  = false;
+    row.updatedBy = userEmail;
+    await this.projectExperienceRepo.save(row);
+  }
+
   async findPerformance(id: string, organizationId: string): Promise<VendorPerformanceResponseDto[]> {
     await this.findVendorOrThrow(id, organizationId);
     return this.performanceRepo.find({
@@ -1144,6 +1360,83 @@ export class VendorService {
       where: { vendorId: id, organizationId },
       order: { evaluatedAt: 'DESC' },
     }) as unknown as Promise<VendorEvaluationResponseDto[]>;
+  }
+
+  // Appends one row to the append-only evaluation trail — the write side of
+  // findEvaluations() above. This is deliberately the ONLY place that writes
+  // vendor_evaluations: nothing here overwrites a prior row, so the full
+  // qualification history (who decided what, at which stage, and when)
+  // stays reconstructable.
+  async addEvaluation(
+    id: string,
+    organizationId: string,
+    dto: AddVendorEvaluationDto,
+    userEmail: string,
+    role: string,
+  ): Promise<VendorEvaluationResponseDto> {
+    const vendor = await this.findVendorOrThrow(id, organizationId);
+
+    // "Return for Clarification" and "Reject" exist to tell the vendor's
+    // owner what to fix or why the vendor did not qualify — a bare status
+    // flip with no reason is not actionable, so a reason is mandatory here
+    // exactly as it already is for a blacklist request.
+    const needsReason = dto.decision === EvaluationDecision.REJECTED
+      || dto.decision === EvaluationDecision.RETURNED;
+    if (needsReason && !dto.comments?.trim()) {
+      throw new BadRequestException(
+        `Comments are required when the decision is ${dto.decision}.`,
+      );
+    }
+
+    const now = new Date();
+    const evaluation = this.evaluationRepo.create({
+      id: uuidv4(),
+      dguid: uuidv4(),
+      organizationId,
+      vendorId: id,
+      stage: dto.stage,
+      decision: dto.decision,
+      score: dto.score,
+      referenceNumber: dto.referenceNumber,
+      comments: dto.comments,
+      evaluatedBy: userEmail,
+      evaluatedAt: now,
+      createdBy: userEmail,
+    });
+    await this.evaluationRepo.save(evaluation);
+
+    // Rolls this decision up onto the vendor's own summary columns — the
+    // "current" values a list screen reads without joining the full trail.
+    // Only touched when the caller actually supplied them, so an early-stage
+    // TECHNICAL score does not stomp a later FINAL classification or vice
+    // versa.
+    const rollup: Partial<Vendor> = {};
+    if (dto.score !== undefined) rollup.vendorEvaluationScore = dto.score;
+    if (dto.riskCategory !== undefined) rollup.riskCategory = dto.riskCategory;
+    if (dto.vendorClassification !== undefined) rollup.vendorClassification = dto.vendorClassification;
+    if (dto.decision === EvaluationDecision.APPROVED) {
+      rollup.approvalReference = dto.referenceNumber ?? vendor.approvalReference;
+      rollup.approvalDate = now;
+    }
+    if (Object.keys(rollup).length) {
+      Object.assign(vendor, rollup, { updatedBy: userEmail });
+      await this.vendorRepo.save(vendor);
+    }
+
+    // APPROVED is the one decision that actually changes vendorStatus — it
+    // reuses enable()'s own rules (blacklist guard, no-pending-request guard,
+    // already-active guard) rather than duplicating them here. REJECTED and
+    // RETURNED leave vendorStatus at UNDER_EVALUATION: the decision just
+    // recorded IS the record of what happened, so no CLARIFICATION_REQUIRED
+    // or REJECTED vendorStatus value is needed.
+    if (dto.decision === EvaluationDecision.APPROVED) {
+      await this.enable(id, organizationId, userEmail, role);
+    }
+
+    this.logger.log(
+      `Vendor ${vendor.code} ${dto.stage} evaluation recorded (${dto.decision}) by ${userEmail}`,
+    );
+    return evaluation as unknown as VendorEvaluationResponseDto;
   }
 
   // ══ Update ════════════════════════════════════════════════════════════
@@ -1164,17 +1457,17 @@ export class VendorService {
     }
     // industryCategoryId is omitted by UpdateVendorDto — the issued code
     // encodes the category prefix, so re-pointing it would desynchronise them.
-    if ((dto as any).industryCategoryId !== undefined) {
-      throw new ConflictException(
-        'Industry Category cannot be changed after the vendor code has been issued',
-      );
-    }
-    // Business status moves only through the dedicated endpoints.
-    if ((dto as any).vendorStatus !== undefined) {
-      throw new ConflictException(
-        'Vendor status must be changed via the enable, disable, or blacklist endpoints',
-      );
-    }
+    // if ((dto as any).industryCategoryId !== undefined) {
+    //   throw new ConflictException(
+    //     'Industry Category cannot be changed after the vendor code has been issued',
+    //   );
+    // }
+    // // Business status moves only through the dedicated endpoints.
+    // if ((dto as any).vendorStatus !== undefined) {
+    //   throw new ConflictException(
+    //     'Vendor status must be changed via the enable, disable, or blacklist endpoints',
+    //   );
+    // }
 
     if (dto.parentCompanyId) {
       await this.validateParentCompany(organizationId, dto.parentCompanyId, id);
@@ -1244,6 +1537,7 @@ export class VendorService {
       [VendorCertification, 'certifications'],
       [VendorDocument,      'documents'],
       [VendorTurnover,      'turnovers'],
+      [VendorProjectExperience, 'projectExperiences'],
     ];
 
     const touched = collections.filter(([, key]) => dto[key] !== undefined);
@@ -1522,7 +1816,7 @@ export class VendorService {
       // A mail outage must not roll back a persisted request — the approver can
       // still act from the pending-requests screen.
       this.logger.error(
-        `Approval email for vendor ${vendor.code} could not be sent: ${err?.message ?? 'unknown error'}`,
+        `Approval email for vendor ${vendor.code} could not be sent: ${err instanceof Error ? err.message : 'unknown error'}`,
       );
       return false;
     }
@@ -1827,6 +2121,7 @@ export class VendorService {
         manager.update(VendorDocument,      scope, softDeletePatch),
         manager.update(VendorMaterial,      scope, softDeletePatch),
         manager.update(VendorTurnover,      scope, softDeletePatch),
+        manager.update(VendorProjectExperience, scope, softDeletePatch),
       ]);
     });
 
