@@ -27,6 +27,7 @@ import { VendorTurnover }      from './vendor-turnover.entity';
 import { VendorEvaluation }    from './vendor-evaluation.entity';
 import { VendorPerformance }   from './vendor-performance.entity';
 import { VendorStatusChangeRequest } from './vendor-status-change-request.entity';
+import { VendorProjectExperience }   from './vendor-project-experience.entity';
 
 @Entity('vendors')
 @Index('UQ_ven_org_code',        ['organizationId', 'code'],                     { unique: true })
@@ -90,12 +91,12 @@ export class Vendor {
 
   // ── Classification ────────────────────────────────────────────────
 
-  @Column({ nullable: false })
+  @Column({ nullable: true })
   industryCategoryId: string;
 
-  @ManyToOne(() => IndustryCategory, { nullable: false, onDelete: 'RESTRICT' })
-  @JoinColumn({ name: 'industryCategoryId' })
-  industryCategory: IndustryCategory;
+  // @ManyToOne(() => IndustryCategory, { nullable: false, onDelete: 'RESTRICT' })
+  // @JoinColumn({ name: 'industryCategoryId' })
+  // industryCategory: IndustryCategory;
 
   // Self-referencing corporate hierarchy:
   //   ABC Global Holdings → ABC Engineering LLC → ABC Engineering India Pvt Ltd
@@ -284,6 +285,17 @@ export class Vendor {
   // Scored performance is append-only in vendor_performances; these are the
   // vendor's own declared credentials captured at registration.
 
+  // DEPRECATED — the four columns below are superseded by the
+  // vendor_project_experiences child table, which holds one structured row per
+  // project instead of one unstructured blob per vendor. They are retained so
+  // existing consumers keep working; write new data through
+  // `projectExperiences` on create/update, or POST /vendors/:id/project-experiences.
+  //
+  //   majorClients             → DISTINCT clientName across the child rows
+  //   projectExperience        → the child rows themselves
+  //   pastPoContractReferences → contractReference / purchaseOrderReference
+  //   blacklistingHistory      → wasBlacklisted + blacklistingRemarks per project
+
   @Column({ type: 'json', nullable: true })
   majorClients: string[];
 
@@ -361,6 +373,7 @@ export class Vendor {
   @OneToMany(() => VendorEvaluation,    e => e.vendor) evaluations: VendorEvaluation[];
   @OneToMany(() => VendorPerformance,   p => p.vendor) performances: VendorPerformance[];
   @OneToMany(() => VendorStatusChangeRequest, r => r.vendor) statusChangeRequests: VendorStatusChangeRequest[];
+  @OneToMany(() => VendorProjectExperience,   e => e.vendor) projectExperiences: VendorProjectExperience[];
 
   // ── Soft delete ───────────────────────────────────────────────────
 

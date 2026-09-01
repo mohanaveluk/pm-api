@@ -5,6 +5,7 @@ import {
   Length, Matches, Max, Min, ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+import { VendorProjectExperienceDto } from './vendor-project-experience.dto';
 
 import { VendorClassification } from '../enums/vendor-classification.enum';
 import { RiskCategory }         from '../enums/risk-category.enum';
@@ -670,4 +671,15 @@ export class CreateVendorDto {
   @ApiPropertyOptional({ type: [VendorTurnoverDto], description: 'Multi-year declared turnover' })
   @IsOptional() @IsArray() @ArrayMaxSize(20) @ValidateNested({ each: true }) @Type(() => VendorTurnoverDto)
   turnovers?: VendorTurnoverDto[];
+
+  @ApiPropertyOptional({
+    type: [VendorProjectExperienceDto],
+    description:
+      "Past projects offered as evidence of capability. Supersedes the deprecated " +
+      "experience.majorClients / projectExperience / pastPoContractReferences / " +
+      "blacklistingHistory text fields — one structured row per project.",
+  })
+  @IsOptional() @IsArray() @ArrayMaxSize(500) @ValidateNested({ each: true })
+  @Type(() => VendorProjectExperienceDto)
+  projectExperiences?: VendorProjectExperienceDto[];
 }

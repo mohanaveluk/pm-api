@@ -13,6 +13,7 @@ import { VendorTurnover }      from './entities/vendor-turnover.entity';
 import { VendorEvaluation }    from './entities/vendor-evaluation.entity';
 import { VendorPerformance }   from './entities/vendor-performance.entity';
 import { VendorStatusChangeRequest } from './entities/vendor-status-change-request.entity';
+import { VendorProjectExperience }   from './entities/vendor-project-experience.entity';
 
 import { IndustryCategory } from '../industry-category/entities/industry-category.entity';
 import { VendorType }       from '../vendor-type/entity/vendor-type.entity';
@@ -44,6 +45,7 @@ import { MaterialCategory } from '../material-category/entities/material-categor
       VendorEvaluation,
       VendorPerformance,
       VendorStatusChangeRequest,
+      VendorProjectExperience,
       IndustryCategory,
       VendorType,
       MaterialCategory,

@@ -20,6 +20,12 @@ import { VendorService }   from './vendor.service';
 import { CreateVendorDto } from './dto/create-vendor.dto';
 import { UpdateVendorDto } from './dto/update-vendor.dto';
 import { CloneVendorDto }  from './dto/clone-vendor.dto';
+import {
+  VendorProjectExperienceDto,
+  VendorProjectExperienceResponseDto,
+  VerifyProjectExperienceDto,
+} from './dto/vendor-project-experience.dto';
+import { AddVendorEvaluationDto } from './dto/vendor-evaluation.dto';
 import { VendorQueryDto }  from './dto/vendor-query.dto';
 import {
   VendorAddressResponseDto,
@@ -544,6 +550,107 @@ export class VendorController {
     return ResponseDto.success(data);
   }
 
+  // ── Project experience ────────────────────────────────────────────────
+
+  @Get(':id/project-experiences')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @ApiOperation({
+    summary: 'Get the vendor\'s past project experience',
+    description:
+      'Structured record of past projects — client, role, scope, value, timeline, ' +
+      'outcome, and any blacklisting that occurred on that project. Replaces the ' +
+      'deprecated free-text majorClients / projectExperience / ' +
+      'pastPoContractReferences / blacklistingHistory fields on the vendor.\n\n' +
+      'Pass verifiedOnly=true to return only references procurement has confirmed ' +
+      'with the client — unverified claims should not carry evaluation weight.',
+  })
+  @ApiParam({ name: 'id', description: 'Vendor UUID' })
+  @ApiQuery({ name: 'verifiedOnly', required: false, type: Boolean })
+  @ApiResponse({ status: 200, description: 'Project experience', type: [VendorProjectExperienceResponseDto] })
+  @ApiResponse({ status: 404, description: 'Vendor not found' })
+  async findProjectExperiences(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Request() req,
+    @Query('verifiedOnly') verifiedOnly?: string,
+  ) {
+    const data = await this.vendorService.findProjectExperiences(
+      id, req.user.organizationId, verifiedOnly === 'true',
+    );
+    return ResponseDto.success(data);
+  }
+
+  @Post(':id/project-experiences')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Add one project to the vendor\'s experience record',
+    description:
+      'Appends a single project without disturbing the existing ones. (Sending ' +
+      'projectExperiences through PUT /vendors/:id replaces the whole collection.) ' +
+      'The new row always starts unverified.',
+  })
+  @ApiParam({ name: 'id', description: 'Vendor UUID' })
+  @ApiBody({ type: VendorProjectExperienceDto })
+  @ApiResponse({ status: 201, description: 'Project experience added', type: VendorProjectExperienceResponseDto })
+  @ApiResponse({ status: 404, description: 'Vendor not found' })
+  async addProjectExperience(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: VendorProjectExperienceDto,
+    @Request() req,
+  ) {
+    const data = await this.vendorService.addProjectExperience(
+      id, req.user.organizationId, dto, req.user.email,
+    );
+    return ResponseDto.created(data, 'Project experience added successfully');
+  }
+
+  @Patch(':id/project-experiences/:experienceId/verify')
+  @Roles('OrganizationAdmin', 'SuperAdmin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Confirm a claimed project experience',
+    description:
+      'Marks the reference as verified by procurement, recording who confirmed it ' +
+      'and when. A vendor cannot verify its own claims — isVerified is never ' +
+      'accepted from a create or update payload.',
+  })
+  @ApiParam({ name: 'id',           description: 'Vendor UUID' })
+  @ApiParam({ name: 'experienceId', description: 'Project experience UUID' })
+  @ApiBody({ type: VerifyProjectExperienceDto, required: false })
+  @ApiResponse({ status: 200, description: 'Marked verified', type: VendorProjectExperienceResponseDto })
+  @ApiResponse({ status: 404, description: 'Vendor or project experience not found'                    })
+  @ApiResponse({ status: 409, description: 'Already verified'                                          })
+  async verifyProjectExperience(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('experienceId', ParseUUIDPipe) experienceId: string,
+    @Body() dto: VerifyProjectExperienceDto,
+    @Request() req,
+  ) {
+    const data = await this.vendorService.verifyProjectExperience(
+      id, experienceId, req.user.organizationId, dto ?? {}, req.user.email,
+    );
+    return ResponseDto.updated(data, 'Project experience verified');
+  }
+
+  @Delete(':id/project-experiences/:experienceId')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Soft-delete one project experience record' })
+  @ApiParam({ name: 'id',           description: 'Vendor UUID' })
+  @ApiParam({ name: 'experienceId', description: 'Project experience UUID' })
+  @ApiResponse({ status: 200, description: 'Project experience deleted'          })
+  @ApiResponse({ status: 404, description: 'Vendor or project experience not found' })
+  async removeProjectExperience(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('experienceId', ParseUUIDPipe) experienceId: string,
+    @Request() req,
+  ) {
+    await this.vendorService.removeProjectExperience(
+      id, experienceId, req.user.organizationId, req.user.email,
+    );
+    return ResponseDto.deleted('Project experience deleted successfully');
+  }
+
   @Get(':id/performance')
   @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
   @ApiOperation({
@@ -593,5 +700,33 @@ export class VendorController {
   async findEvaluations(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
     const data = await this.vendorService.findEvaluations(id, req.user.organizationId);
     return ResponseDto.success(data);
+  }
+
+  @Post(':id/evaluations')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Record a vendor evaluation / approval decision',
+    description:
+      'Appends one row to the evaluation trail — the write side of GET /vendors/:id/evaluations. ' +
+      'APPROVED additionally activates the vendor (same rules as PATCH /vendors/:id/enable). ' +
+      'REJECTED and RETURNED require `comments` and leave vendorStatus unchanged: the decision ' +
+      'itself is the record of what happened.',
+  })
+  @ApiParam({ name: 'id', description: 'Vendor UUID' })
+  @ApiBody({ type: AddVendorEvaluationDto })
+  @ApiResponse({ status: 201, description: 'Evaluation recorded', type: VendorEvaluationResponseDto })
+  @ApiResponse({ status: 400, description: 'Comments missing for a REJECTED/RETURNED decision' })
+  @ApiResponse({ status: 404, description: 'Vendor not found' })
+  @ApiResponse({ status: 409, description: 'APPROVED on a blacklisted or already-active vendor' })
+  async addEvaluation(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AddVendorEvaluationDto,
+    @Request() req,
+  ) {
+    const data = await this.vendorService.addEvaluation(
+      id, req.user.organizationId, dto, req.user.email, req.user.role,
+    );
+    return ResponseDto.created(data, 'Evaluation recorded successfully');
   }
 }

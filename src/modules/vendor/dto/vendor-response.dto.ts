@@ -14,6 +14,7 @@ import { VendorDocumentType }   from '../enums/vendor-document-type.enum';
 import { EvaluationStage }      from '../enums/evaluation-stage.enum';
 import { EvaluationDecision }   from '../enums/evaluation-decision.enum';
 import { TransportationMode }   from '../../material/enums/transportation-mode.enum';
+import { VendorProjectExperienceResponseDto } from './vendor-project-experience.dto';
 
 // ── Child response shapes ──────────────────────────────────────────────────
 
@@ -173,7 +174,7 @@ export class VendorDropdownDto {
   @ApiPropertyOptional({ description: 'Joined for display' }) vendorTypeName?: string;
   @ApiProperty({ enum: VendorStatus }) vendorStatus: VendorStatus;
   @ApiPropertyOptional({ enum: VendorClassification }) vendorClassification?: VendorClassification;
-  @ApiProperty() industryCategoryId: string;
+  @ApiPropertyOptional() industryCategoryId?: string;
 }
 
 export class VendorListItemDto {
@@ -186,7 +187,7 @@ export class VendorListItemDto {
   @ApiPropertyOptional({ description: 'Joined for display' }) vendorTypeName?: string;
   @ApiProperty({ enum: VendorStatus }) vendorStatus: VendorStatus;
   @ApiProperty() isActive: boolean;
-  @ApiProperty() industryCategoryId: string;
+  @ApiPropertyOptional() industryCategoryId?: string;
   @ApiPropertyOptional({ description: 'Joined for display' }) industryCategoryName?: string;
 
   // Already on the loaded entity as a JSON column, so surfacing it here costs
@@ -226,7 +227,7 @@ export class VendorResponseDto {
   @ApiPropertyOptional({ description: 'Joined Vendor Type master record' }) vendorType?: any;
 
   // ── Classification ────────────────────────────────────────────────
-  @ApiProperty() industryCategoryId: string;
+  @ApiPropertyOptional() industryCategoryId: string;
   @ApiPropertyOptional() industryCategory?: any;
   @ApiPropertyOptional() parentCompanyId?: string;
   @ApiPropertyOptional() parentCompany?: any;
@@ -329,6 +330,11 @@ export class VendorResponseDto {
   @ApiPropertyOptional({ type: [VendorDocumentResponseDto] })      documents?: VendorDocumentResponseDto[];
   @ApiPropertyOptional({ type: [VendorMaterialResponseDto] })      materials?: VendorMaterialResponseDto[];
   @ApiPropertyOptional({ type: [VendorTurnoverResponseDto] })      turnovers?: VendorTurnoverResponseDto[];
+  @ApiPropertyOptional({
+    type: [VendorProjectExperienceResponseDto],
+    description: "Structured past-project record — supersedes the deprecated experience text fields",
+  })
+  projectExperiences?: VendorProjectExperienceResponseDto[];
 
   // ── Audit ─────────────────────────────────────────────────────────
   @ApiPropertyOptional() createdBy?: string;
