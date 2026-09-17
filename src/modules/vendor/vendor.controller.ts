@@ -68,7 +68,7 @@ export class VendorController {
   // ── Static routes first (must precede /:id) ───────────────────────────
 
   @Get('active')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager', 'user')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager', 'User')
   @ApiOperation({
     summary: 'Get selectable vendors for dropdown/lookup',
     description:
@@ -92,7 +92,7 @@ export class VendorController {
   }
 
   @Get('status-requests/pending')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @ApiOperation({
     summary: 'Approver inbox: every pending blacklist / un-blacklist request',
     description:
@@ -109,7 +109,7 @@ export class VendorController {
   }
 
   @Post('documents/upload')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @ApiOperation({
     summary: 'Upload a vendor document (image or PDF) and get its URL',
     description:
@@ -129,7 +129,7 @@ export class VendorController {
   // ── Collection routes ─────────────────────────────────────────────────
 
   @Post()
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Create a vendor (code is auto-generated)',
@@ -153,7 +153,7 @@ export class VendorController {
   }
 
   @Get()
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @ApiOperation({
     summary: 'List vendors with search, filters, sorting and pagination',
     description:
@@ -170,7 +170,7 @@ export class VendorController {
   // ── Item routes ───────────────────────────────────────────────────────
 
   @Get(':id')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @ApiOperation({
     summary: 'Get complete vendor detail including child collections',
     description:
@@ -188,7 +188,7 @@ export class VendorController {
   }
 
   @Post(':id/clone')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Clone an existing vendor with all its reference data',
@@ -221,7 +221,7 @@ export class VendorController {
   }
 
   @Put(':id')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @ApiOperation({
     summary: 'Update a vendor',
     description:
@@ -312,7 +312,7 @@ export class VendorController {
   // status moves only when the decision is recorded below.
 
   @Patch(':id/blacklist')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({
     summary: 'Request that a vendor be blacklisted (requires manager approval)',
@@ -343,7 +343,7 @@ export class VendorController {
   }
 
   @Patch(':id/remove-blacklist')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({
     summary: 'Request that a vendor blacklisting be lifted (requires manager approval)',
@@ -381,7 +381,7 @@ export class VendorController {
   // mail scanners pre-fetch links and would approve requests nobody clicked.
 
   @Patch('status-requests/:requestId/approve')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Approve a pending vendor blacklist / un-blacklist request',
@@ -408,7 +408,7 @@ export class VendorController {
   }
 
   @Patch('status-requests/:requestId/reject')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Reject a pending vendor blacklist / un-blacklist request',
@@ -434,7 +434,7 @@ export class VendorController {
   }
 
   @Patch('status-requests/:requestId/cancel')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Withdraw your own pending request',
@@ -457,7 +457,7 @@ export class VendorController {
   // ── Sub-resource reads ────────────────────────────────────────────────
 
   @Get(':id/contacts')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @ApiOperation({ summary: 'Get vendor contacts' })
   @ApiParam({ name: 'id', description: 'Vendor UUID' })
   @ApiResponse({ status: 200, description: 'Vendor contacts', type: [VendorContactResponseDto] })
@@ -468,7 +468,7 @@ export class VendorController {
   }
 
   @Get(':id/addresses')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @ApiOperation({ summary: 'Get vendor addresses (registered, corporate, factory, …)' })
   @ApiParam({ name: 'id', description: 'Vendor UUID' })
   @ApiResponse({ status: 200, description: 'Vendor addresses', type: [VendorAddressResponseDto] })
@@ -479,7 +479,7 @@ export class VendorController {
   }
 
   @Get(':id/bank-accounts')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @ApiOperation({
     summary: 'Get vendor bank accounts (masked by default)',
     description:
@@ -507,7 +507,7 @@ export class VendorController {
   }
 
   @Get(':id/certifications')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @ApiOperation({
     summary: 'Get vendor certifications',
     description: 'Each row carries derived isExpired and daysToExpiry values for re-qualification screening.',
@@ -521,7 +521,7 @@ export class VendorController {
   }
 
   @Get(':id/documents')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @ApiOperation({
     summary: 'Get vendor documents',
     description: 'Returns all versions, newest first per document type. URLs only — never binaries.',
@@ -535,7 +535,7 @@ export class VendorController {
   }
 
   @Get(':id/materials')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @ApiOperation({
     summary: 'Get materials this vendor supplies',
     description:
@@ -553,7 +553,7 @@ export class VendorController {
   // ── Project experience ────────────────────────────────────────────────
 
   @Get(':id/project-experiences')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @ApiOperation({
     summary: 'Get the vendor\'s past project experience',
     description:
@@ -580,7 +580,7 @@ export class VendorController {
   }
 
   @Post(':id/project-experiences')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Add one project to the vendor\'s experience record',
@@ -633,7 +633,7 @@ export class VendorController {
   }
 
   @Delete(':id/project-experiences/:experienceId')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Soft-delete one project experience record' })
   @ApiParam({ name: 'id',           description: 'Vendor UUID' })
@@ -652,7 +652,7 @@ export class VendorController {
   }
 
   @Get(':id/performance')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @ApiOperation({
     summary: 'Get vendor performance history',
     description:
@@ -668,7 +668,7 @@ export class VendorController {
   }
 
   @Get(':id/status-requests')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @ApiOperation({
     summary: 'Get the blacklist / un-blacklist request history for a vendor',
     description:
@@ -687,7 +687,7 @@ export class VendorController {
   }
 
   @Get(':id/evaluations')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @ApiOperation({
     summary: 'Get vendor evaluation / approval trail',
     description:
@@ -703,7 +703,7 @@ export class VendorController {
   }
 
   @Post(':id/evaluations')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Record a vendor evaluation / approval decision',

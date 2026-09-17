@@ -1068,6 +1068,30 @@ export class VendorService {
       .take(limit);
 
     const [items, total] = await qb.getManyAndCount();
+    // const materialCategories = await this.materialCategoryRepo.find({
+    //   where: { organizationId, isDeleted: false, id: In(items.productCategories ?? []) },
+    // });
+
+    // const vendorItems = items.map(v => {
+    //   const categories = (v.productCategories ?? [])
+    //     .map(catId => materialCategories.find(mc => mc.id === catId))
+    //     .filter(Boolean)
+    //     .map(mc => mc!.name);
+    // });
+
+    // find the product category names for each vendor and include them in the response. the productCategories field in the vendor entity is an array of ids, so we need to map them to their names using the materialCategoryRepo.
+    const materialCategories = await this.materialCategoryRepo.find({
+      where: { organizationId, isDeleted: false },
+    });
+
+    items.forEach(vendor => {
+      const categoryNames = (vendor.productCategories ?? [])
+        .map(catId => materialCategories.find(mc => mc.id === catId))
+        .filter(Boolean)
+        .map(mc => mc!.name);
+      vendor.productCategories = categoryNames;
+    });
+
 
     return {
       items:      items.map(v => this.toListItem(v)),
