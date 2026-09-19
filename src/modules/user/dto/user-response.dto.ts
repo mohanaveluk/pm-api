@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class UserResponseDto {
   @ApiProperty({
@@ -48,4 +48,10 @@ export class UserResponseDto {
     example: '2023-09-20T12:00:00Z'
   })
   created_at: Date;
+
+  @ApiPropertyOptional({
+    description: '1 = internal staff (default), 0 = external (vendor-side) account',
+    example: 1,
+  })
+  is_internal?: number;
 }

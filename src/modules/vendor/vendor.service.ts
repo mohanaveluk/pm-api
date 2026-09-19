@@ -58,6 +58,7 @@ import {
   VerifyProjectExperienceDto,
 } from './dto/vendor-project-experience.dto';
 import { AddVendorEvaluationDto } from './dto/vendor-evaluation.dto';
+import { AddVendorDocumentDto, VendorDocumentQueryDto } from './dto/vendor-document.dto';
 import {
   DecideVendorStatusChangeDto,
   RequestVendorStatusChangeDto,
@@ -66,6 +67,7 @@ import {
 } from './dto/vendor-status-change.dto';
 
 import { VendorStatus }              from './enums/vendor-status.enum';
+import { VendorDocumentType }        from './enums/vendor-document-type.enum';
 import { EvaluationDecision }        from './enums/evaluation-decision.enum';
 import { PendingStatusChange }       from './enums/pending-status-change.enum';
 import { StatusChangeRequestType }   from './enums/status-change-request-type.enum';
@@ -95,6 +97,27 @@ const APPROVER_ROLES = ['Manager', 'OrganizationAdmin', 'SuperAdmin'];
 // Approval links stay valid for a week — long enough for a manager on leave,
 // short enough that a leaked mailbox is not indefinitely exploitable.
 const APPROVAL_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Document types that hold one current document at a time and auto-supersede
+// on a plain "Add" (no supersedesId needed): a vendor has exactly one current
+// trade licence, not several. Types left out of this set — ISO certificates,
+// product catalogues, financial statements, past POs, client testimonials,
+// insurance, and "other" — commonly exist several-at-once, so a plain Add
+// always starts an independent chain alongside whatever is already filed.
+// The requesting user's identity for ownership scoping — every sub-resource
+// method that accepts one narrows an external caller to the vendor(s) they
+// themselves created, exactly like findAll/findOne/update/remove.
+type VendorOwner = { email: string; isInternal: boolean };
+
+const VENDOR_SINGLETON_DOCUMENT_TYPES = new Set<VendorDocumentType>([
+  VendorDocumentType.PRE_QUALIFICATION,
+  VendorDocumentType.COMPANY_PROFILE,
+  VendorDocumentType.TRADE_LICENSE,
+  VendorDocumentType.TAX_REGISTRATION,
+  VendorDocumentType.BANK_LETTER,
+  VendorDocumentType.CANCELLED_CHEQUE,
+  VendorDocumentType.HSE_POLICY,
+]);
 
 @Injectable()
 export class VendorService {
@@ -402,6 +425,7 @@ export class VendorService {
   }
 
   private toDocumentResponse(d: VendorDocument): VendorDocumentResponseDto {
+    const expiry = d.expiryDate ? new Date(d.expiryDate) : null;
     return {
       id:            d.id,
       documentType:  d.documentType,
@@ -415,6 +439,8 @@ export class VendorService {
       effectiveTo:   d.effectiveTo,
       expiryDate:    d.expiryDate,
       isActive:      d.isActive,
+      isExpired:     expiry ? expiry.getTime() < Date.now() : false,
+      remarks:       d.remarks,
       uploadedBy:    d.uploadedBy,
       uploadedAt:    d.uploadedAt,
     };
@@ -718,16 +744,12 @@ export class VendorService {
     }
 
     if (dto.documents?.length) {
-      await manager.save(VendorDocument, dto.documents.map(d =>
-        manager.create(VendorDocument, {
-          ...d,
-          ...base,
-          dguid:      uuidv4(),
-          version:    1,
-          uploadedBy: userEmail,
-          uploadedAt: new Date(),
-        }),
-      ));
+      // Routed through the same version-chain logic as addDocument(), so a
+      // create payload carrying two documents of the same type (e.g. two ISO
+      // certificates) numbers them 1 and 2 rather than both claiming v1.
+      for (const d of dto.documents) {
+        await this.appendDocumentRow(manager, vendorId, organizationId, d, userEmail);
+      }
     }
 
     if (dto.materials?.length) {
@@ -1050,7 +1072,11 @@ export class VendorService {
 
   // ══ Read ══════════════════════════════════════════════════════════════
 
-  async findAll(query: VendorQueryDto, organizationId: string): Promise<VendorListResponseDto> {
+  async findAll(
+    query: VendorQueryDto,
+    organizationId: string,
+    requestingUser?: { email: string; isInternal: boolean },
+  ): Promise<VendorListResponseDto> {
     const { page = 1, limit = 20, sortBy = 'createdAt', sortOrder = 'DESC' } = query;
     const safeSortBy = ALLOWED_SORT_FIELDS.has(sortBy) ? sortBy : 'createdAt';
 
@@ -1060,6 +1086,12 @@ export class VendorService {
       .leftJoinAndSelect('v.vendorType',       'vendorType')
       .where('v.organizationId = :organizationId', { organizationId })
       .andWhere('v.isDeleted = false');
+
+    // An external caller only ever sees the vendors they themselves created —
+    // internal staff see every vendor in the organization.
+    if (requestingUser && !requestingUser.isInternal) {
+      qb.andWhere('v.createdBy = :createdBy', { createdBy: requestingUser.email });
+    }
 
     this.applyFilters(qb, query);
 
@@ -1139,12 +1171,14 @@ export class VendorService {
   async findOne(
     id: string,
     organizationId: string,
-    _userEmail: string,
+    userEmail: string,
     role: string,
+    isInternal = true,
   ): Promise<VendorResponseDto> {
-    const vendor = await this.findVendorOrThrow(id, organizationId, [
-      'parentCompany', 'vendorType',
-    ]); //industryCategory
+    const vendor = await this.findVendorOrThrow(
+      id, organizationId, ['parentCompany', 'vendorType'],
+      { email: userEmail, isInternal },
+    ); //industryCategory
 
     const reveal = this.canViewSensitive(role);
 
@@ -1195,23 +1229,35 @@ export class VendorService {
   // Central organization-ownership gate. Every read and write path goes
   // through here, so a vendor from another organization is indistinguishable
   // from one that does not exist.
+  //
+  // `owner`, when supplied, adds a second gate for external (is_internal=false)
+  // callers: a vendor they did not themselves create is likewise
+  // indistinguishable from one that does not exist — the same 404-not-403
+  // philosophy as the organization check, so an external caller can never
+  // probe for the existence of another vendor by id.
   private async findVendorOrThrow(
     id: string,
     organizationId: string,
     relations: string[] = [],
+    owner?: VendorOwner,
   ): Promise<Vendor> {
     const vendor = await this.vendorRepo.findOne({
       where: { id, organizationId, isDeleted: false },
       relations,
     });
     if (!vendor) throw new NotFoundException(`Vendor ${id} not found`);
+    if (owner && !owner.isInternal && vendor.createdBy !== owner.email) {
+      throw new NotFoundException(`Vendor ${id} not found`);
+    }
     return vendor;
   }
 
   // ══ Sub-resource reads ════════════════════════════════════════════════
 
-  async findContacts(id: string, organizationId: string): Promise<VendorContactResponseDto[]> {
-    await this.findVendorOrThrow(id, organizationId);
+  async findContacts(
+    id: string, organizationId: string, owner?: VendorOwner,
+  ): Promise<VendorContactResponseDto[]> {
+    await this.findVendorOrThrow(id, organizationId, [], owner);
     const rows = await this.contactRepo.find({
       where: { vendorId: id, organizationId, isDeleted: false },
       order: { isPrimary: 'DESC', contactPerson: 'ASC' },
@@ -1219,8 +1265,10 @@ export class VendorService {
     return rows.map(c => this.toContactResponse(c));
   }
 
-  async findAddresses(id: string, organizationId: string): Promise<VendorAddressResponseDto[]> {
-    await this.findVendorOrThrow(id, organizationId);
+  async findAddresses(
+    id: string, organizationId: string, owner?: VendorOwner,
+  ): Promise<VendorAddressResponseDto[]> {
+    await this.findVendorOrThrow(id, organizationId, [], owner);
     const rows = await this.addressRepo.find({
       where: { vendorId: id, organizationId, isDeleted: false },
       order: { isPrimary: 'DESC', addressType: 'ASC' },
@@ -1233,16 +1281,19 @@ export class VendorService {
     organizationId: string,
     role: string,
     reveal: boolean,
+    owner?: VendorOwner,
   ): Promise<VendorBankAccountResponseDto[]> {
-    await this.findVendorOrThrow(id, organizationId);
+    await this.findVendorOrThrow(id, organizationId, [], owner);
     if (reveal) this.assertCanViewSensitive(role);
 
     const rows = await this.loadBankAccounts(id, organizationId, reveal);
     return rows.map(b => this.toBankResponse(b, reveal));
   }
 
-  async findCertifications(id: string, organizationId: string): Promise<VendorCertificationResponseDto[]> {
-    await this.findVendorOrThrow(id, organizationId);
+  async findCertifications(
+    id: string, organizationId: string, owner?: VendorOwner,
+  ): Promise<VendorCertificationResponseDto[]> {
+    await this.findVendorOrThrow(id, organizationId, [], owner);
     const rows = await this.certRepo.find({
       where: { vendorId: id, organizationId, isDeleted: false },
       order: { expiryDate: 'ASC' },
@@ -1250,17 +1301,182 @@ export class VendorService {
     return rows.map(c => this.toCertificationResponse(c));
   }
 
-  async findDocuments(id: string, organizationId: string): Promise<VendorDocumentResponseDto[]> {
-    await this.findVendorOrThrow(id, organizationId);
+  async findDocuments(
+    id: string,
+    organizationId: string,
+    query: VendorDocumentQueryDto = {},
+    owner?: VendorOwner,
+  ): Promise<VendorDocumentResponseDto[]> {
+    await this.findVendorOrThrow(id, organizationId, [], owner);
+
+    const where: Record<string, any> = { vendorId: id, organizationId, isDeleted: false };
+    if (query.documentType) where.documentType = query.documentType;
+    // Superseded versions are hidden unless explicitly requested.
+    if (!query.includeSuperseded) where.isActive = true;
+
     const rows = await this.documentRepo.find({
-      where: { vendorId: id, organizationId, isDeleted: false },
+      where,
       order: { documentType: 'ASC', version: 'DESC' },
     });
     return rows.map(d => this.toDocumentResponse(d));
   }
 
-  async findMaterials(id: string, organizationId: string): Promise<VendorMaterialResponseDto[]> {
-    await this.findVendorOrThrow(id, organizationId);
+  // Highest version number ever used by ANY row of this type on this vendor —
+  // active, superseded, or soft-deleted — plus one. `isDeleted` is a plain
+  // boolean column, not a TypeORM soft-delete, so leaving it out of the
+  // where-clause means deleted rows are still counted: version numbers must
+  // never repeat for a (vendor, documentType) pair, even after one is removed.
+  // Returns 1 when nothing has been filed under this type yet.
+  private async nextDocumentVersion(
+    manager: EntityManager,
+    vendorId: string,
+    organizationId: string,
+    documentType: VendorDocumentType,
+  ): Promise<number> {
+    const latest = await manager.findOne(VendorDocument, {
+      where: { vendorId, organizationId, documentType },
+      order: { version: 'DESC' },
+    });
+    return latest ? Number(latest.version) + 1 : 1;
+  }
+
+  // Inserts one document row, resolving its place in a version chain. Shared
+  // by addDocument() and saveChildren(), so both behave identically. Unlike
+  // Material, a vendor carries no purchase-order lock, so nothing here ever
+  // has to treat an existing row as frozen.
+  private async appendDocumentRow(
+    manager: EntityManager,
+    vendorId: string,
+    organizationId: string,
+    dto: AddVendorDocumentDto,
+    userEmail: string,
+  ): Promise<VendorDocument> {
+    let version: number;
+    let supersedesId: string | null = null;
+
+    if (dto.supersedesId) {
+      const previous = await manager.findOne(VendorDocument, {
+        where: { id: dto.supersedesId, vendorId, organizationId, isDeleted: false },
+      });
+      if (!previous) {
+        throw new NotFoundException(`Document ${dto.supersedesId} not found on this vendor`);
+      }
+      if (previous.documentType !== dto.documentType) {
+        throw new UnprocessableEntityException(
+          `A ${dto.documentType} cannot supersede a ${previous.documentType} document`,
+        );
+      }
+      if (!previous.isActive) {
+        throw new ConflictException(
+          'That document has already been superseded. Supersede the current version instead.',
+        );
+      }
+      version      = Number(previous.version) + 1;
+      supersedesId = previous.id;
+
+      // Retain the superseded row; only its currency flag changes.
+      previous.isActive  = false;
+      previous.updatedBy = userEmail;
+      await manager.save(VendorDocument, previous);
+    } else if (VENDOR_SINGLETON_DOCUMENT_TYPES.has(dto.documentType)) {
+      // Types that hold one current document at a time auto-supersede, so a
+      // client need not know the previous row's id to replace a trade licence.
+      const current = await manager.findOne(VendorDocument, {
+        where: {
+          vendorId, organizationId, documentType: dto.documentType,
+          isActive: true, isDeleted: false,
+        },
+        order: { version: 'DESC' },
+      });
+      if (current) {
+        version      = Number(current.version) + 1;
+        supersedesId = current.id;
+        current.isActive  = false;
+        current.updatedBy = userEmail;
+        await manager.save(VendorDocument, current);
+      } else {
+        // Nothing currently active under this type — either nothing was ever
+        // filed, or every prior row was soft-deleted by a wholesale replace.
+        // Either way the version sequence continues rather than restarting,
+        // so numbering never repeats for a given (vendor, documentType) pair.
+        version = await this.nextDocumentVersion(manager, vendorId, organizationId, dto.documentType);
+      }
+    } else {
+      // Multi-instance types (certificates, catalogues, testimonials, …) never
+      // auto-supersede — several may be active side by side — but their
+      // version numbers still continue one running sequence per type rather
+      // than every independent upload claiming "version 1".
+      version = await this.nextDocumentVersion(manager, vendorId, organizationId, dto.documentType);
+    }
+
+    const now = new Date();
+    const document = manager.create(VendorDocument, {
+      ...dto,
+      id:    uuidv4(),
+      dguid: uuidv4(),
+      vendorId,
+      organizationId,
+      version,
+      supersedesId,
+      isActive:   true,
+      uploadedBy: userEmail,
+      uploadedAt: now,
+      createdBy:  userEmail,
+      updatedBy:  userEmail,
+    });
+    await manager.save(VendorDocument, document);
+    return document;
+  }
+
+  // Adds a document to an existing vendor. Deliberately unconditional — a
+  // vendor carries no purchase-order lock, so unlike Material's addDocument()
+  // there is nothing here that could ever refuse the request.
+  async addDocument(
+    id: string,
+    dto: AddVendorDocumentDto,
+    organizationId: string,
+    userEmail: string,
+    owner?: VendorOwner,
+  ): Promise<VendorDocumentResponseDto> {
+    const vendor = await this.findVendorOrThrow(id, organizationId, [], owner);
+
+    return this.dataSource.transaction(async manager => {
+      const document = await this.appendDocumentRow(manager, vendor.id, organizationId, dto, userEmail);
+      this.logger.log(
+        `Document ${dto.documentType} v${document.version} added to vendor ${vendor.code} by ${userEmail}`,
+      );
+      return this.toDocumentResponse(document);
+    });
+  }
+
+  // Soft-deletes a document. Unconditional — nothing about a vendor's status
+  // (blacklisted, disabled, under evaluation) protects a document from removal.
+  async removeDocument(
+    id: string,
+    documentId: string,
+    organizationId: string,
+    userEmail: string,
+    owner?: VendorOwner,
+  ): Promise<void> {
+    await this.findVendorOrThrow(id, organizationId, [], owner);
+
+    const document = await this.documentRepo.findOne({
+      where: { id: documentId, vendorId: id, organizationId, isDeleted: false },
+    });
+    if (!document) throw new NotFoundException(`Document ${documentId} not found on this vendor`);
+
+    document.isDeleted = true;
+    document.deletedAt = new Date();
+    document.deletedBy = userEmail;
+    document.isActive  = false;
+    document.updatedBy = userEmail;
+    await this.documentRepo.save(document);
+  }
+
+  async findMaterials(
+    id: string, organizationId: string, owner?: VendorOwner,
+  ): Promise<VendorMaterialResponseDto[]> {
+    await this.findVendorOrThrow(id, organizationId, [], owner);
     const rows = await this.vendorMaterialRepo.find({
       where: { vendorId: id, organizationId, isDeleted: false },
       relations: ['material'],
@@ -1274,8 +1490,9 @@ export class VendorService {
     id: string,
     organizationId: string,
     verifiedOnly = false,
+    owner?: VendorOwner,
   ): Promise<VendorProjectExperienceResponseDto[]> {
-    await this.findVendorOrThrow(id, organizationId);
+    await this.findVendorOrThrow(id, organizationId, [], owner);
 
     const where: Record<string, any> = { vendorId: id, organizationId, isDeleted: false };
     // Bid evaluation should be able to ask for confirmed references only.
@@ -1296,8 +1513,9 @@ export class VendorService {
     organizationId: string,
     dto: VendorProjectExperienceDto,
     userEmail: string,
+    owner?: VendorOwner,
   ): Promise<VendorProjectExperienceResponseDto> {
-    await this.findVendorOrThrow(id, organizationId);
+    await this.findVendorOrThrow(id, organizationId, [], owner);
 
     const row = this.projectExperienceRepo.create({
       ...dto,
@@ -1354,8 +1572,9 @@ export class VendorService {
     experienceId: string,
     organizationId: string,
     userEmail: string,
+    owner?: VendorOwner,
   ): Promise<void> {
-    await this.findVendorOrThrow(id, organizationId);
+    await this.findVendorOrThrow(id, organizationId, [], owner);
 
     const row = await this.projectExperienceRepo.findOne({
       where: { id: experienceId, vendorId: id, organizationId, isDeleted: false },
@@ -1370,8 +1589,10 @@ export class VendorService {
     await this.projectExperienceRepo.save(row);
   }
 
-  async findPerformance(id: string, organizationId: string): Promise<VendorPerformanceResponseDto[]> {
-    await this.findVendorOrThrow(id, organizationId);
+  async findPerformance(
+    id: string, organizationId: string, owner?: VendorOwner,
+  ): Promise<VendorPerformanceResponseDto[]> {
+    await this.findVendorOrThrow(id, organizationId, [], owner);
     return this.performanceRepo.find({
       where: { vendorId: id, organizationId },
       order: { evaluatedAt: 'DESC' },
@@ -1471,8 +1692,11 @@ export class VendorService {
     organizationId: string,
     userEmail: string,
     role: string,
+    isInternal = true,
   ): Promise<VendorResponseDto> {
-    const vendor = await this.findVendorOrThrow(id, organizationId);
+    const vendor = await this.findVendorOrThrow(
+      id, organizationId, [], { email: userEmail, isInternal },
+    );
 
     // code is server-generated; reject any attempt to move it even though the
     // DTO never declares it.
@@ -1535,7 +1759,7 @@ export class VendorService {
       await queryRunner.release();
     }
 
-    return this.findOne(id, organizationId, userEmail, role);
+    return this.findOne(id, organizationId, userEmail, role, isInternal);
   }
 
   // Replaces the child collections an update actually carried.
@@ -2100,8 +2324,15 @@ export class VendorService {
   // any transactional record is never removed — those documents must stay
   // resolvable for audit, tax, and contractual reasons. Disable or blacklist
   // it instead.
-  async remove(id: string, organizationId: string, userEmail: string): Promise<void> {
-    const vendor = await this.findVendorOrThrow(id, organizationId);
+  async remove(
+    id: string,
+    organizationId: string,
+    userEmail: string,
+    isInternal = true,
+  ): Promise<void> {
+    const vendor = await this.findVendorOrThrow(
+      id, organizationId, [], { email: userEmail, isInternal },
+    );
 
     this.assertNoPendingStatusChange(vendor, 'delete');
 

@@ -43,6 +43,7 @@ import { EvaluationDecision } from './enums/evaluation-decision.enum';
 import { RiskCategory }         from './enums/risk-category.enum';
 import { VendorClassification } from './enums/vendor-classification.enum';
 import { VendorProjectStatus } from './enums/vendor-project-status.enum';
+import { VendorDocumentType } from './enums/vendor-document-type.enum';
 import { EmailService } from 'src/shared/email/email.service';
 
 const ORG_A = '11111111-1111-4111-8111-111111111111';
@@ -118,6 +119,7 @@ describe('VendorService', () => {
   let statusRequestRepo: any;
   let projectExperienceRepo: any;
   let evaluationRepo: any;
+  let documentRepo: any;
   let userRepo: any;
   let emailService: any;
   let usageValidation: VendorUsageValidationService;
@@ -150,9 +152,10 @@ describe('VendorService', () => {
     dataSource = {
       createQueryRunner: jest.fn(() => queryRunner),
       transaction: jest.fn(async (cb: any) => cb({
-        create: jest.fn((_e: any, v: any) => v),
-        save:   jest.fn(async (_e: any, v: any) => v),
-        update: jest.fn(async () => ({ affected: 1 })),
+        create:  jest.fn((_e: any, v: any) => v),
+        save:    jest.fn(async (_e: any, v: any) => v),
+        update:  jest.fn(async () => ({ affected: 1 })),
+        findOne: jest.fn(async () => null),
       })),
     };
 
@@ -164,6 +167,7 @@ describe('VendorService', () => {
     statusRequestRepo = makeRepo();
     projectExperienceRepo = makeRepo();
     evaluationRepo = makeRepo();
+    documentRepo = makeRepo();
     userRepo     = makeRepo();
     emailService = { sendEmail: jest.fn(async () => true) };
 
@@ -178,7 +182,7 @@ describe('VendorService', () => {
         { provide: getRepositoryToken(VendorAddress),       useValue: makeRepo() },
         { provide: getRepositoryToken(VendorBankAccount),   useValue: bankRepo },
         { provide: getRepositoryToken(VendorCertification), useValue: makeRepo() },
-        { provide: getRepositoryToken(VendorDocument),      useValue: makeRepo() },
+        { provide: getRepositoryToken(VendorDocument),      useValue: documentRepo },
         { provide: getRepositoryToken(VendorMaterial),      useValue: makeRepo() },
         { provide: getRepositoryToken(VendorTurnover),      useValue: makeRepo() },
         { provide: getRepositoryToken(VendorEvaluation),    useValue: evaluationRepo },
@@ -399,6 +403,26 @@ describe('VendorService', () => {
         service.update(VENDOR_ID, { vendorName: 'Taken Name' } as any, ORG_A, USER, 'SuperAdmin'),
       ).rejects.toThrow(ConflictException);
     });
+
+    it('404s an external caller updating a vendor they did not create', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor({ createdBy: 'someone.else@example.com' }));
+
+      await expect(
+        service.update(
+          VENDOR_ID, { tradeName: 'x' } as any, ORG_A, 'vendor.rep@external.example', 'ExternalUser', false,
+        ),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('lets an external caller update a vendor they created', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor({ createdBy: 'vendor.rep@external.example' }));
+
+      await expect(
+        service.update(
+          VENDOR_ID, { tradeName: 'x' } as any, ORG_A, 'vendor.rep@external.example', 'ExternalUser', false,
+        ),
+      ).resolves.toBeDefined();
+    });
   });
 
   // ══ Enable / disable / blacklist ═══════════════════════════════════════
@@ -576,6 +600,193 @@ describe('VendorService', () => {
       await expect(
         service.addEvaluation(VENDOR_ID, ORG_B, evaluationDto(), USER, 'Manager'),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ══ Documents (dedicated sub-resource) ════════════════════════════════
+
+  describe('addDocument', () => {
+    const documentDto = (overrides: Partial<Record<string, unknown>> = {}) => ({
+      documentType: VendorDocumentType.ISO_CERTIFICATE,
+      documentUrl: 'https://storage.example.com/vendors/iso-9001.pdf',
+      fileName: 'iso-9001.pdf',
+      ...overrides,
+    } as any);
+
+    it('files a brand-new document at version 1 when nothing exists yet', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor());
+
+      const result = await service.addDocument(VENDOR_ID, documentDto(), ORG_A, USER);
+
+      expect(result.version).toBe(1);
+      expect(result.supersedesId).toBeNull();
+      expect(result.documentType).toBe(VendorDocumentType.ISO_CERTIFICATE);
+    });
+
+    it('is never refused by vendor status — a vendor carries no purchase-order lock', async () => {
+      vendorRepo.findOne.mockResolvedValue(
+        existingVendor({ vendorStatus: VendorStatus.BLACKLISTED, isActive: false }),
+      );
+      await expect(service.addDocument(VENDOR_ID, documentDto(), ORG_A, USER)).resolves.toBeDefined();
+    });
+
+    it('auto-supersedes the current version of a singleton type with no supersedesId', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor());
+      const current = { id: 'prev-doc-id', documentType: VendorDocumentType.TRADE_LICENSE, version: 2, isActive: true };
+      const manager = {
+        create:  jest.fn((_e: any, v: any) => v),
+        save:    jest.fn(async (_e: any, v: any) => v),
+        findOne: jest.fn(async () => current),
+      };
+      dataSource.transaction.mockImplementationOnce(async (cb: any) => cb(manager));
+
+      const result = await service.addDocument(
+        VENDOR_ID, documentDto({ documentType: VendorDocumentType.TRADE_LICENSE }), ORG_A, USER,
+      );
+
+      expect(result.version).toBe(3);
+      expect(result.supersedesId).toBe('prev-doc-id');
+      expect(manager.save).toHaveBeenCalledWith(
+        VendorDocument, expect.objectContaining({ id: 'prev-doc-id', isActive: false }),
+      );
+    });
+
+    it('does NOT auto-supersede a multi-instance type — a second ISO certificate starts an independent chain', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor());
+      const manager = {
+        create:  jest.fn((_e: any, v: any) => v),
+        save:    jest.fn(async (_e: any, v: any) => v),
+        findOne: jest.fn(async () => ({ id: 'existing-iso', version: 1 })),
+      };
+      dataSource.transaction.mockImplementationOnce(async (cb: any) => cb(manager));
+
+      const result = await service.addDocument(VENDOR_ID, documentDto(), ORG_A, USER);
+
+      // Continues the type's version sequence rather than superseding it.
+      expect(result.version).toBe(2);
+      expect(result.supersedesId).toBeNull();
+      expect(manager.save).not.toHaveBeenCalledWith(
+        VendorDocument, expect.objectContaining({ id: 'existing-iso', isActive: false }),
+      );
+    });
+
+    it('files the next version when supersedesId is given explicitly', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor());
+      const previous = { id: 'prev-cert', documentType: VendorDocumentType.ISO_CERTIFICATE, version: 1, isActive: true };
+      const manager = {
+        create:  jest.fn((_e: any, v: any) => v),
+        save:    jest.fn(async (_e: any, v: any) => v),
+        findOne: jest.fn(async () => previous),
+      };
+      dataSource.transaction.mockImplementationOnce(async (cb: any) => cb(manager));
+
+      const result = await service.addDocument(VENDOR_ID, documentDto({ supersedesId: 'prev-cert' }), ORG_A, USER);
+
+      expect(result.version).toBe(2);
+      expect(result.supersedesId).toBe('prev-cert');
+    });
+
+    it('rejects superseding a document of a different type', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor());
+      const previous = { id: 'prev-cert', documentType: VendorDocumentType.TRADE_LICENSE, version: 1, isActive: true };
+      const manager = {
+        create:  jest.fn((_e: any, v: any) => v),
+        save:    jest.fn(async (_e: any, v: any) => v),
+        findOne: jest.fn(async () => previous),
+      };
+      dataSource.transaction.mockImplementationOnce(async (cb: any) => cb(manager));
+
+      await expect(
+        service.addDocument(VENDOR_ID, documentDto({ supersedesId: 'prev-cert' }), ORG_A, USER),
+      ).rejects.toThrow(UnprocessableEntityException);
+    });
+
+    it('refuses to supersede an already-superseded document', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor());
+      const previous = { id: 'prev-cert', documentType: VendorDocumentType.ISO_CERTIFICATE, version: 1, isActive: false };
+      const manager = {
+        create:  jest.fn((_e: any, v: any) => v),
+        save:    jest.fn(async (_e: any, v: any) => v),
+        findOne: jest.fn(async () => previous),
+      };
+      dataSource.transaction.mockImplementationOnce(async (cb: any) => cb(manager));
+
+      await expect(
+        service.addDocument(VENDOR_ID, documentDto({ supersedesId: 'prev-cert' }), ORG_A, USER),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('refuses cross-organization addDocument', async () => {
+      vendorRepo.findOne.mockResolvedValue(null);
+      await expect(service.addDocument(VENDOR_ID, documentDto(), ORG_B, USER)).rejects.toThrow(NotFoundException);
+    });
+
+    it('404s an external caller filing a document against a vendor they did not create', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor({ createdBy: 'someone.else@example.com' }));
+      await expect(
+        service.addDocument(
+          VENDOR_ID, documentDto(), ORG_A, 'vendor.rep@external.example',
+          { email: 'vendor.rep@external.example', isInternal: false },
+        ),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('lets an external caller file a document against a vendor they created', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor({ createdBy: 'vendor.rep@external.example' }));
+      await expect(
+        service.addDocument(
+          VENDOR_ID, documentDto(), ORG_A, 'vendor.rep@external.example',
+          { email: 'vendor.rep@external.example', isInternal: false },
+        ),
+      ).resolves.toBeDefined();
+    });
+  });
+
+  describe('removeDocument', () => {
+    it('soft-deletes a document unconditionally', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor());
+      const doc = { id: 'doc-1', vendorId: VENDOR_ID, organizationId: ORG_A, isDeleted: false, isActive: true };
+      documentRepo.findOne.mockResolvedValue(doc);
+
+      await service.removeDocument(VENDOR_ID, 'doc-1', ORG_A, USER);
+
+      expect(documentRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'doc-1', isDeleted: true, isActive: false, deletedBy: USER }),
+      );
+    });
+
+    it('throws when the document does not exist on this vendor', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor());
+      documentRepo.findOne.mockResolvedValue(null);
+      await expect(service.removeDocument(VENDOR_ID, 'missing', ORG_A, USER)).rejects.toThrow(NotFoundException);
+    });
+
+    it('refuses cross-organization removeDocument', async () => {
+      vendorRepo.findOne.mockResolvedValue(null);
+      await expect(service.removeDocument(VENDOR_ID, 'doc-1', ORG_B, USER)).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('findDocuments', () => {
+    it('defaults to active versions only', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor());
+      documentRepo.find.mockResolvedValue([]);
+
+      await service.findDocuments(VENDOR_ID, ORG_A);
+
+      expect(documentRepo.find).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ isActive: true }) }),
+      );
+    });
+
+    it('includes superseded versions when requested', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor());
+      documentRepo.find.mockResolvedValue([]);
+
+      await service.findDocuments(VENDOR_ID, ORG_A, { includeSuperseded: true });
+
+      const where = documentRepo.find.mock.calls[0][0].where;
+      expect(where.isActive).toBeUndefined();
     });
   });
 
@@ -1236,6 +1447,22 @@ describe('VendorService', () => {
       vendorRepo.findOne.mockResolvedValue(null);
       await expect(service.remove(VENDOR_ID, ORG_B, USER)).rejects.toThrow(NotFoundException);
     });
+
+    it('404s an external caller deleting a vendor they did not create', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor({ createdBy: 'someone.else@example.com' }));
+      await expect(
+        service.remove(VENDOR_ID, ORG_A, 'vendor.rep@external.example', false),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('lets an external caller delete a vendor they created', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor({ createdBy: 'vendor.rep@external.example' }));
+      vendorRepo.count.mockResolvedValue(0);
+
+      await service.remove(VENDOR_ID, ORG_A, 'vendor.rep@external.example', false);
+
+      expect(dataSource.transaction).toHaveBeenCalled();
+    });
   });
 
   // ══ Sensitive data ═════════════════════════════════════════════════════
@@ -1342,6 +1569,55 @@ describe('VendorService', () => {
 
       expect(result).toMatchObject({ total: 1, page: 1, limit: 20, totalPages: 1 });
       expect(Array.isArray(result.items)).toBe(true);
+    });
+
+    it('scopes an external caller to only the vendors they created', async () => {
+      const qb = makeQb();
+      vendorRepo.createQueryBuilder.mockReturnValue(qb);
+
+      await service.findAll({} as any, ORG_A, { email: 'vendor.rep@external.example', isInternal: false });
+
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'v.createdBy = :createdBy', { createdBy: 'vendor.rep@external.example' },
+      );
+    });
+
+    it('does not scope an internal caller by createdBy', async () => {
+      const qb = makeQb();
+      vendorRepo.createQueryBuilder.mockReturnValue(qb);
+
+      await service.findAll({} as any, ORG_A, { email: 'staff@example.com', isInternal: true });
+
+      const clauses = qb.andWhere.mock.calls.map((c: any[]) => c[0]);
+      expect(clauses).not.toContain('v.createdBy = :createdBy');
+    });
+  });
+
+  describe('findOne — external ownership', () => {
+    const EXTERNAL_EMAIL = 'vendor.rep@external.example';
+
+    it('lets an external caller view a vendor they created', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor({ createdBy: EXTERNAL_EMAIL }));
+
+      await expect(
+        service.findOne(VENDOR_ID, ORG_A, EXTERNAL_EMAIL, 'ExternalUser', false),
+      ).resolves.toBeDefined();
+    });
+
+    it('404s an external caller for a vendor they did not create', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor({ createdBy: 'someone.else@example.com' }));
+
+      await expect(
+        service.findOne(VENDOR_ID, ORG_A, EXTERNAL_EMAIL, 'ExternalUser', false),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('lets an internal caller view any vendor in the organization regardless of createdBy', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor({ createdBy: 'someone.else@example.com' }));
+
+      await expect(
+        service.findOne(VENDOR_ID, ORG_A, USER, 'SuperAdmin', true),
+      ).resolves.toBeDefined();
     });
   });
 
@@ -1586,6 +1862,15 @@ describe('VendorService', () => {
         await expect(service.findProjectExperiences(VENDOR_ID, ORG_B))
           .rejects.toThrow(NotFoundException);
       });
+
+      it('404s an external caller for a vendor they did not create', async () => {
+        vendorRepo.findOne.mockResolvedValue(existingVendor({ createdBy: 'someone.else@example.com' }));
+        await expect(
+          service.findProjectExperiences(
+            VENDOR_ID, ORG_A, false, { email: 'vendor.rep@external.example', isInternal: false },
+          ),
+        ).rejects.toThrow(NotFoundException);
+      });
     });
 
     // ── Append ───────────────────────────────────────────────────────
@@ -1621,6 +1906,24 @@ describe('VendorService', () => {
         vendorRepo.findOne.mockResolvedValue(null);
         await expect(service.addProjectExperience(
           VENDOR_ID, ORG_B, { projectName: 'X' } as any, USER,
+        )).rejects.toThrow(NotFoundException);
+      });
+
+      it('lets an external caller append a project experience to a vendor they created', async () => {
+        vendorRepo.findOne.mockResolvedValue(existingVendor({ createdBy: 'vendor.rep@external.example' }));
+
+        await expect(service.addProjectExperience(
+          VENDOR_ID, ORG_A, { projectName: 'X' } as any, 'vendor.rep@external.example',
+          { email: 'vendor.rep@external.example', isInternal: false },
+        )).resolves.toBeDefined();
+      });
+
+      it('404s an external caller appending to a vendor they did not create', async () => {
+        vendorRepo.findOne.mockResolvedValue(existingVendor({ createdBy: 'someone.else@example.com' }));
+
+        await expect(service.addProjectExperience(
+          VENDOR_ID, ORG_A, { projectName: 'X' } as any, 'vendor.rep@external.example',
+          { email: 'vendor.rep@external.example', isInternal: false },
         )).rejects.toThrow(NotFoundException);
       });
     });

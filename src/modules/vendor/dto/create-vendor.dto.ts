@@ -210,6 +210,14 @@ export class VendorDocumentDto {
   @IsOptional() @IsString() @Length(1, 255) @Transform(trim)
   fileName?: string;
 
+  @ApiPropertyOptional({ example: 'application/pdf' })
+  @IsOptional() @IsString() @Length(1, 100) @Transform(trim)
+  mimeType?: string;
+
+  @ApiPropertyOptional({ example: 245760, description: 'File size in bytes' })
+  @IsOptional() @IsInt() @Min(0)
+  fileSizeBytes?: number;
+
   @ApiPropertyOptional({ example: '2026-01-01' })
   @IsOptional() @IsDateString()
   effectiveFrom?: string;
@@ -221,6 +229,10 @@ export class VendorDocumentDto {
   @ApiPropertyOptional({ example: '2026-12-31' })
   @IsOptional() @IsDateString()
   expiryDate?: string;
+
+  @ApiPropertyOptional({ example: 'Renewed after the 2026 surveillance audit' })
+  @IsOptional() @IsString() @Transform(trim)
+  remarks?: string;
 }
 
 export class VendorMaterialDto {

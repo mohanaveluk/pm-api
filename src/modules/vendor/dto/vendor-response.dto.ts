@@ -99,11 +99,13 @@ export class VendorDocumentResponseDto {
   @ApiPropertyOptional() mimeType?: string;
   @ApiPropertyOptional() fileSizeBytes?: number;
   @ApiProperty() version: number;
-  @ApiPropertyOptional() supersedesId?: string;
+  @ApiPropertyOptional({ description: 'The document row this version replaced' }) supersedesId?: string;
   @ApiPropertyOptional() effectiveFrom?: Date;
   @ApiPropertyOptional() effectiveTo?: Date;
   @ApiPropertyOptional() expiryDate?: Date;
-  @ApiProperty() isActive: boolean;
+  @ApiProperty({ description: 'False once a newer version supersedes this row' }) isActive: boolean;
+  @ApiProperty({ description: 'Derived: expiryDate is in the past' }) isExpired: boolean;
+  @ApiPropertyOptional() remarks?: string;
   @ApiPropertyOptional() uploadedBy?: string;
   @ApiPropertyOptional() uploadedAt?: Date;
 }

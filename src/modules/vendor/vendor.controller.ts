@@ -26,6 +26,7 @@ import {
   VerifyProjectExperienceDto,
 } from './dto/vendor-project-experience.dto';
 import { AddVendorEvaluationDto } from './dto/vendor-evaluation.dto';
+import { AddVendorDocumentDto, VendorDocumentQueryDto } from './dto/vendor-document.dto';
 import { VendorQueryDto }  from './dto/vendor-query.dto';
 import {
   VendorAddressResponseDto,
@@ -64,6 +65,12 @@ import {
 @Controller('vendors')
 export class VendorController {
   constructor(private readonly vendorService: VendorService) {}
+
+  // Shorthand for the ownership context every sub-resource read/write needs
+  // to scope an external (is_internal=false) caller to their own vendors.
+  private owner(req: any): { email: string; isInternal: boolean } {
+    return { email: req.user.email, isInternal: req.user.isInternal };
+  }
 
   // ── Static routes first (must precede /:id) ───────────────────────────
 
@@ -109,7 +116,7 @@ export class VendorController {
   }
 
   @Post('documents/upload')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager', 'ProjectManager', 'WarehouseManager', 'ExternalUser')
   @ApiOperation({
     summary: 'Upload a vendor document (image or PDF) and get its URL',
     description:
@@ -129,7 +136,7 @@ export class VendorController {
   // ── Collection routes ─────────────────────────────────────────────────
 
   @Post()
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager', 'ProjectManager', 'WarehouseManager', 'ExternalUser')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Create a vendor (code is auto-generated)',
@@ -153,36 +160,40 @@ export class VendorController {
   }
 
   @Get()
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager', 'ProjectManager', 'WarehouseManager', 'ExternalUser')
   @ApiOperation({
     summary: 'List vendors with search, filters, sorting and pagination',
     description:
       'Case-insensitive search spans code, vendorName, tradeName, email, ' +
       'businessRegistrationNumber and taxRegistrationNumber. Blacklisted vendors are ' +
-      'excluded unless includeBlacklisted=true or vendorStatus=BLACKLISTED is requested.',
+      'excluded unless includeBlacklisted=true or vendorStatus=BLACKLISTED is requested.\n\n' +
+      'An external (is_internal=false) caller only ever sees the vendors they themselves ' +
+      'created — internal staff see every vendor in the organization.',
   })
   @ApiResponse({ status: 200, description: 'Paginated vendor list', type: VendorListResponseDto })
   async findAll(@Query() query: VendorQueryDto, @Request() req) {
-    const data = await this.vendorService.findAll(query, req.user.organizationId);
+    const data = await this.vendorService.findAll(query, req.user.organizationId, {
+      email: req.user.email, isInternal: req.user.isInternal,
+    });
     return ResponseDto.success(data);
   }
 
   // ── Item routes ───────────────────────────────────────────────────────
 
   @Get(':id')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager', 'ProjectManager', 'WarehouseManager', 'ExternalUser')
   @ApiOperation({
     summary: 'Get complete vendor detail including child collections',
     description:
       'Bank account numbers, IBAN and SWIFT are masked unless the caller holds a ' +
-      'sensitive-data role.',
+      'sensitive-data role. An external caller gets a 404 for a vendor they did not create.',
   })
   @ApiParam({ name: 'id', description: 'Vendor UUID' })
   @ApiResponse({ status: 200, description: 'Vendor detail', type: VendorResponseDto })
-  @ApiResponse({ status: 404, description: 'Vendor not found in this organization' })
+  @ApiResponse({ status: 404, description: 'Vendor not found in this organization, or not owned by this external caller' })
   async findOne(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
     const data = await this.vendorService.findOne(
-      id, req.user.organizationId, req.user.email, req.user.role,
+      id, req.user.organizationId, req.user.email, req.user.role, req.user.isInternal,
     );
     return ResponseDto.success(data);
   }
@@ -221,12 +232,13 @@ export class VendorController {
   }
 
   @Put(':id')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager', 'ProjectManager', 'WarehouseManager', 'ExternalUser')
   @ApiOperation({
     summary: 'Update a vendor',
     description:
       'code and industryCategoryId are immutable once the code is issued. ' +
-      'vendorStatus is not patchable here — use the enable, disable, or blacklist endpoints.',
+      'vendorStatus is not patchable here — use the enable, disable, or blacklist endpoints. ' +
+      'An external caller gets a 404 for a vendor they did not create.',
   })
   @ApiParam({ name: 'id', description: 'Vendor UUID' })
   @ApiBody({ type: UpdateVendorDto })
@@ -240,13 +252,13 @@ export class VendorController {
     @Request() req,
   ) {
     const data = await this.vendorService.update(
-      id, dto, req.user.organizationId, req.user.email, req.user.role,
+      id, dto, req.user.organizationId, req.user.email, req.user.role, req.user.isInternal,
     );
     return ResponseDto.updated(data, 'Vendor updated successfully');
   }
 
   @Delete(':id')
-  @Roles('OrganizationAdmin', 'SuperAdmin')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ExternalUser')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Soft-delete a vendor',
@@ -254,14 +266,15 @@ export class VendorController {
       'Sets isDeleted=true, isActive=false and cascades the soft delete to owned child ' +
       'records. Refused when the vendor is referenced by any transactional record ' +
       '(RFQ, PO, contract, invoice, inspection, project) or has subsidiary vendors — ' +
-      'those references must remain resolvable. Disable or blacklist instead.',
+      'those references must remain resolvable. Disable or blacklist instead. An external ' +
+      'caller gets a 404 for a vendor they did not create.',
   })
   @ApiParam({ name: 'id', description: 'Vendor UUID' })
   @ApiResponse({ status: 200, description: 'Vendor soft-deleted'                                     })
-  @ApiResponse({ status: 404, description: 'Vendor not found in this organization'                   })
+  @ApiResponse({ status: 404, description: 'Vendor not found in this organization, or not owned by this external caller' })
   @ApiResponse({ status: 409, description: 'Vendor referenced by transactions or has subsidiaries'   })
   async remove(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
-    await this.vendorService.remove(id, req.user.organizationId, req.user.email);
+    await this.vendorService.remove(id, req.user.organizationId, req.user.email, req.user.isInternal);
     return ResponseDto.deleted('Vendor deleted successfully');
   }
 
@@ -457,29 +470,29 @@ export class VendorController {
   // ── Sub-resource reads ────────────────────────────────────────────────
 
   @Get(':id/contacts')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager', 'ProjectManager', 'WarehouseManager', 'ExternalUser')
   @ApiOperation({ summary: 'Get vendor contacts' })
   @ApiParam({ name: 'id', description: 'Vendor UUID' })
   @ApiResponse({ status: 200, description: 'Vendor contacts', type: [VendorContactResponseDto] })
   @ApiResponse({ status: 404, description: 'Vendor not found'                                  })
   async findContacts(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
-    const data = await this.vendorService.findContacts(id, req.user.organizationId);
+    const data = await this.vendorService.findContacts(id, req.user.organizationId, this.owner(req));
     return ResponseDto.success(data);
   }
 
   @Get(':id/addresses')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager', 'ProjectManager', 'WarehouseManager', 'ExternalUser')
   @ApiOperation({ summary: 'Get vendor addresses (registered, corporate, factory, …)' })
   @ApiParam({ name: 'id', description: 'Vendor UUID' })
   @ApiResponse({ status: 200, description: 'Vendor addresses', type: [VendorAddressResponseDto] })
   @ApiResponse({ status: 404, description: 'Vendor not found'                                   })
   async findAddresses(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
-    const data = await this.vendorService.findAddresses(id, req.user.organizationId);
+    const data = await this.vendorService.findAddresses(id, req.user.organizationId, this.owner(req));
     return ResponseDto.success(data);
   }
 
   @Get(':id/bank-accounts')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager', 'ProjectManager', 'WarehouseManager', 'ExternalUser')
   @ApiOperation({
     summary: 'Get vendor bank accounts (masked by default)',
     description:
@@ -501,13 +514,13 @@ export class VendorController {
     @Query('reveal') reveal?: string,
   ) {
     const data = await this.vendorService.findBankAccounts(
-      id, req.user.organizationId, req.user.role, reveal === 'true',
+      id, req.user.organizationId, req.user.role, reveal === 'true', this.owner(req),
     );
     return ResponseDto.success(data);
   }
 
   @Get(':id/certifications')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager', 'ProjectManager', 'WarehouseManager', 'ExternalUser')
   @ApiOperation({
     summary: 'Get vendor certifications',
     description: 'Each row carries derived isExpired and daysToExpiry values for re-qualification screening.',
@@ -516,26 +529,87 @@ export class VendorController {
   @ApiResponse({ status: 200, description: 'Vendor certifications', type: [VendorCertificationResponseDto] })
   @ApiResponse({ status: 404, description: 'Vendor not found'                                              })
   async findCertifications(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
-    const data = await this.vendorService.findCertifications(id, req.user.organizationId);
+    const data = await this.vendorService.findCertifications(id, req.user.organizationId, this.owner(req));
     return ResponseDto.success(data);
   }
 
   @Get(':id/documents')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager', 'ProjectManager', 'WarehouseManager', 'ExternalUser')
   @ApiOperation({
     summary: 'Get vendor documents',
-    description: 'Returns all versions, newest first per document type. URLs only — never binaries.',
+    description:
+      'Returns the current version of each document by default. Pass ' +
+      'includeSuperseded=true for the full version history, or documentType to filter.',
   })
   @ApiParam({ name: 'id', description: 'Vendor UUID' })
   @ApiResponse({ status: 200, description: 'Vendor documents', type: [VendorDocumentResponseDto] })
   @ApiResponse({ status: 404, description: 'Vendor not found'                                    })
-  async findDocuments(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
-    const data = await this.vendorService.findDocuments(id, req.user.organizationId);
+  async findDocuments(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: VendorDocumentQueryDto,
+    @Request() req,
+  ) {
+    const data = await this.vendorService.findDocuments(id, req.user.organizationId, query, this.owner(req));
     return ResponseDto.success(data);
   }
 
+  @Post(':id/documents')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager', 'ProjectManager', 'WarehouseManager', 'ExternalUser')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Add a document to a vendor',
+    description:
+      'Files a new document against the vendor — available at any point in the vendor\'s ' +
+      'lifecycle, whatever its status. Nothing is ever overwritten: pass supersedesId to file ' +
+      'the upload as the next version of an existing document (the superseded row is retained, ' +
+      'flagged inactive). Omit it to add a brand-new document — single-instance types (trade ' +
+      'licence, tax registration, bank letter, HSE policy, …) auto-supersede their current ' +
+      'version; everything else (ISO certificates, catalogues, testimonials, …) starts an ' +
+      'independent chain alongside whatever is already filed.',
+  })
+  @ApiParam({ name: 'id', description: 'Vendor UUID' })
+  @ApiBody({ type: AddVendorDocumentDto })
+  @ApiResponse({ status: 201, description: 'Document filed', type: VendorDocumentResponseDto })
+  @ApiResponse({ status: 404, description: 'Vendor or superseded document not found'         })
+  @ApiResponse({ status: 409, description: 'The referenced document is already superseded'   })
+  @ApiResponse({ status: 422, description: 'Document type does not match the superseded row' })
+  async addDocument(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AddVendorDocumentDto,
+    @Request() req,
+  ) {
+    const data = await this.vendorService.addDocument(
+      id, dto, req.user.organizationId, req.user.email, this.owner(req),
+    );
+    return ResponseDto.created(data, 'Document added successfully');
+  }
+
+  @Delete(':id/documents/:documentId')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager', 'ProjectManager', 'WarehouseManager', 'ExternalUser')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Soft-delete a vendor document',
+    description:
+      'Unconditional — a vendor carries no purchase-order lock, so removal is never refused. ' +
+      'An external caller gets a 404 for a vendor they did not create.',
+  })
+  @ApiParam({ name: 'id',         description: 'Vendor UUID' })
+  @ApiParam({ name: 'documentId', description: 'Document UUID' })
+  @ApiResponse({ status: 200, description: 'Document deleted'               })
+  @ApiResponse({ status: 404, description: 'Vendor or document not found'   })
+  async removeDocument(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('documentId', ParseUUIDPipe) documentId: string,
+    @Request() req,
+  ) {
+    await this.vendorService.removeDocument(
+      id, documentId, req.user.organizationId, req.user.email, this.owner(req),
+    );
+    return ResponseDto.deleted('Document deleted successfully');
+  }
+
   @Get(':id/materials')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager', 'ProjectManager', 'WarehouseManager', 'ExternalUser')
   @ApiOperation({
     summary: 'Get materials this vendor supplies',
     description:
@@ -546,14 +620,14 @@ export class VendorController {
   @ApiResponse({ status: 200, description: 'Supplied materials', type: [VendorMaterialResponseDto] })
   @ApiResponse({ status: 404, description: 'Vendor not found'                                      })
   async findMaterials(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
-    const data = await this.vendorService.findMaterials(id, req.user.organizationId);
+    const data = await this.vendorService.findMaterials(id, req.user.organizationId, this.owner(req));
     return ResponseDto.success(data);
   }
 
   // ── Project experience ────────────────────────────────────────────────
 
   @Get(':id/project-experiences')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager', 'ProjectManager', 'WarehouseManager', 'ExternalUser')
   @ApiOperation({
     summary: 'Get the vendor\'s past project experience',
     description:
@@ -574,13 +648,13 @@ export class VendorController {
     @Query('verifiedOnly') verifiedOnly?: string,
   ) {
     const data = await this.vendorService.findProjectExperiences(
-      id, req.user.organizationId, verifiedOnly === 'true',
+      id, req.user.organizationId, verifiedOnly === 'true', this.owner(req),
     );
     return ResponseDto.success(data);
   }
 
   @Post(':id/project-experiences')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager', 'ProjectManager', 'WarehouseManager', 'ExternalUser')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Add one project to the vendor\'s experience record',
@@ -599,7 +673,7 @@ export class VendorController {
     @Request() req,
   ) {
     const data = await this.vendorService.addProjectExperience(
-      id, req.user.organizationId, dto, req.user.email,
+      id, req.user.organizationId, dto, req.user.email, this.owner(req),
     );
     return ResponseDto.created(data, 'Project experience added successfully');
   }
@@ -633,7 +707,7 @@ export class VendorController {
   }
 
   @Delete(':id/project-experiences/:experienceId')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager', 'ProjectManager', 'WarehouseManager', 'ExternalUser')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Soft-delete one project experience record' })
   @ApiParam({ name: 'id',           description: 'Vendor UUID' })
@@ -646,13 +720,13 @@ export class VendorController {
     @Request() req,
   ) {
     await this.vendorService.removeProjectExperience(
-      id, experienceId, req.user.organizationId, req.user.email,
+      id, experienceId, req.user.organizationId, req.user.email, this.owner(req),
     );
     return ResponseDto.deleted('Project experience deleted successfully');
   }
 
   @Get(':id/performance')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager', 'ProjectManager', 'WarehouseManager', 'ExternalUser')
   @ApiOperation({
     summary: 'Get vendor performance history',
     description:
@@ -663,7 +737,7 @@ export class VendorController {
   @ApiResponse({ status: 200, description: 'Performance history', type: [VendorPerformanceResponseDto] })
   @ApiResponse({ status: 404, description: 'Vendor not found'                                          })
   async findPerformance(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
-    const data = await this.vendorService.findPerformance(id, req.user.organizationId);
+    const data = await this.vendorService.findPerformance(id, req.user.organizationId, this.owner(req));
     return ResponseDto.success(data);
   }
 

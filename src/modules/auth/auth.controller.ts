@@ -391,50 +391,77 @@ export class AuthController {
   }
 
   @Put(':uguid')
-  @ApiOperation({ summary: 'Update user details' })
-  @ApiResponse({ 
-    status: 200, 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SuperAdmin', 'OrganizationAdmin')
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Update user details (admin)',
+    description:
+      'Edits any field on the account — profile details, work info, role, and the ' +
+      'internal/external flag. A plain OrganizationAdmin may only edit users in their ' +
+      'own organization; SuperAdmin may edit anyone. Never touches the password — use ' +
+      'the forgot-password flow for that.',
+  })
+  @ApiResponse({
+    status: 200,
     description: 'User updated successfully',
     type: User
   })
-  @ApiResponse({ 
-    status: 400, 
-    description: 'Invalid input' 
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid input'
   })
-  @ApiResponse({ 
-    status: 401, 
-    description: 'Unauthorized' 
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized'
   })
-  @ApiResponse({ 
-    status: 404, 
-    description: 'User not found' 
+  @ApiResponse({
+    status: 403,
+    description: 'Not authorised to edit a user outside your own organization',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'User not found'
   })
   async updateUser(
     @Param('uguid') uguid: string,
-    @Body() updateUserDto: UpdateUserDto
+    @Body() updateUserDto: UpdateUserDto,
+    @Request() req,
   ) {
-    return this.authService.updateUser(uguid, updateUserDto);
+    return this.authService.updateUser(uguid, updateUserDto, {
+      organizationId: req.user.organizationId, role: req.user.role,
+    });
   }
 
   @Patch(':uguid/status')
-  @ApiOperation({ summary: 'Toggle user active status' })
-  @ApiResponse({ 
-    status: 200, 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SuperAdmin', 'OrganizationAdmin')
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Enable or disable a user account' })
+  @ApiResponse({
+    status: 200,
     description: 'User status updated successfully',
     type: User
   })
-  @ApiResponse({ 
-    status: 401, 
-    description: 'Unauthorized' 
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized'
   })
-  @ApiResponse({ 
-    status: 404, 
-    description: 'User not found' 
+  @ApiResponse({
+    status: 403,
+    description: 'Not authorised to change status for a user outside your own organization',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'User not found'
   })
   async toggleUserStatus(
     @Param('uguid') uguid: string,
-    @Body() toggleStatusDto: ToggleUserStatusDto
+    @Body() toggleStatusDto: ToggleUserStatusDto,
+    @Request() req,
   ) {
-    return this.authService.toggleStatus(uguid, toggleStatusDto.isActive);
+    return this.authService.toggleStatus(uguid, toggleStatusDto.isActive, {
+      organizationId: req.user.organizationId, role: req.user.role,
+    });
   }
 }
