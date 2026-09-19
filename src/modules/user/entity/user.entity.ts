@@ -63,7 +63,13 @@ export class User {
   
   @Column({ default: '1' })
   is_active: number
-  
+
+  // Distinguishes internal staff from external (vendor-side) accounts.
+  // 1 = internal (default), 0 = external. An external user is scoped to only
+  // the vendor records they created — see VendorService's ownership checks.
+  @Column({ default: 1 })
+  is_internal: number
+
   @Index({ unique: true })
   @Column({nullable: false})
   uguid: string

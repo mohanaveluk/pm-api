@@ -1,6 +1,6 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Expose, Type } from 'class-transformer';
-import { IsDate, IsEmail, IsNotEmpty, IsOptional, IsString, Matches, MinLength } from 'class-validator';
+import { IsBoolean, IsDate, IsEmail, IsNotEmpty, IsOptional, IsString, Matches, MinLength } from 'class-validator';
 import { PrimaryGeneratedColumn } from 'typeorm';
 import { Alias } from 'typeorm/query-builder/Alias';
 
@@ -154,4 +154,14 @@ export class RegisterDto {
 
   @ApiProperty({example: '3rpfoe78-ba2d-4c72-923f-97398pomnh360', description: 'OrgacnizationId', required: true, nullable: false, name: 'organization_id'})
   OrganizationId: string;
+
+  @ApiPropertyOptional({
+    example: true,
+    description:
+      'True (default) for internal staff. False for an external (vendor-side) account — ' +
+      'that user will only ever see the Vendor Master records they themselves created.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  is_internal?: boolean;
 }

@@ -60,7 +60,7 @@ export class UserService {
         }
 
         const user = await this.userRepo.findOne({
-            where: { id: userId, organizationId, is_deleted: false },
+            where: { uguid: userId, organizationId, is_deleted: false },
             relations: ['role'],
         });
 
@@ -88,6 +88,7 @@ export class UserService {
             projectsWorkedOn: u.projectsWorkedOn,
             profile_image: u.profile_image,
             is_active: u.is_active,
+            is_internal: u.is_internal,
             is_email_verified: u.is_email_verified,
             organizationId: u.organizationId,
             role: u.role ? { id: u.role.id, guid: u.role.guid, name: u.role.name } : null,

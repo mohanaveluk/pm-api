@@ -50,6 +50,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       lastName: user.last_name,
       role: role !== null && role !== undefined ? role.name : '',
       organizationId: user.organizationId || null,
+      // Looked up fresh from the DB on every request, exactly like `role`
+      // above — never trust a stale/forged claim for this from the JWT itself.
+      isInternal: user.is_internal !== 0,
     };
   }
 }

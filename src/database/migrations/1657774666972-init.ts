@@ -53,6 +53,7 @@ export class init1657774666972 implements MigrationInterface {
           ,('ProcurementManager',           '631dfd33-e742-4c01-b6c4-a52c3846d47d')
           ,('WarehouseManager',             '1fc3dbce-4282-4e24-81a1-381d191c0792')
           ,('User',                         'e8f577d3-ad43-4563-8079-395fc4a7a94a')
+          ,('ExternalUser',                 '4b6b1a0e-6f2b-4a7a-8b3a-2f9a9ab7c9d1')
           ;
           `);
     

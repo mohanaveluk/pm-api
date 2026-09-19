@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, BadRequestException, NotFoundException, InternalServerErrorException, HttpException, GoneException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException, NotFoundException, InternalServerErrorException, HttpException, GoneException, ForbiddenException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -87,6 +87,9 @@ export class AuthService {
       const hashedPassword = await bcrypt.hash(registerDto.password, 10);
       const verificationCode = this.generateOTC();
       const verificationCodeExpiry = new Date(Date.now() + 30 * 60 * 1000); // 15 minutes
+      // Defaults to internal (1) unless the caller explicitly marks the
+      // account external — an admin creating a vendor-side login.
+      const isInternal = registerDto.is_internal === false ? 0 : 1;
 
       if(unverifiedUser){
         // Update user properties
@@ -97,6 +100,7 @@ export class AuthService {
         unverifiedUser.verification_code_expiry = verificationCodeExpiry;
         unverifiedUser.is_email_verified = false;
         unverifiedUser.is_active = 0;
+        unverifiedUser.is_internal = isInternal;
       }
 
       const user = unverifiedUser ? unverifiedUser : (this.userRepository.create({
@@ -109,7 +113,8 @@ export class AuthService {
         verification_code: verificationCode,
         verification_code_expiry: verificationCodeExpiry,
         is_email_verified: false,
-        is_active: 0
+        is_active: 0,
+        is_internal: isInternal,
       }));
 
       const savedUser = await this.userRepository.save(user);
@@ -784,20 +789,27 @@ export class AuthService {
   }
   
 
-  async updateUser(uguid: string, updateUserDto: UpdateUserDto): Promise<User> {
+  // `requestingUser` gates the edit to the caller's own organization — a plain
+  // OrganizationAdmin may only edit users in their own org; SuperAdmin may
+  // edit anyone. Only the JwtStrategy-derived, DB-fresh values are trusted.
+  async updateUser(
+    uguid: string,
+    updateUserDto: UpdateUserDto,
+    requestingUser: { organizationId: string | null; role: string },
+  ): Promise<User> {
     try {
       const user = await this.userRepository.findOne({
         where: { uguid, is_deleted: false },
-        relations: ['role']
+        relations: ['role'],
       });
 
       if (!user) {
         throw new NotFoundException(`User with ID ${uguid} not found`);
       }
 
-      const role = await this.rolesRepository.findOne({
-        where: {guid: updateUserDto.roleGuid}
-      });
+      if (requestingUser.role !== 'SuperAdmin' && requestingUser.organizationId !== user.organizationId) {
+        throw new ForbiddenException('Access denied to this organization');
+      }
 
       // Validate email uniqueness if email is being updated
       if (updateUserDto.email && updateUserDto.email !== user.email) {
@@ -809,19 +821,43 @@ export class AuthService {
         }
       }
 
-      Object.assign(user, updateUserDto);
-      user.role = role;
-      user.role_id = role?.guid || null;
+      // role_guid and role_id are handled explicitly rather than via
+      // Object.assign: JwtStrategy re-derives the effective role from
+      // role_guid on every request, so leaving it unset here would let an
+      // admin "change" a user's role in the UI while the change never
+      // actually takes effect for authorization.
+      const { role_guid, is_internal, ...scalarUpdates } = updateUserDto;
+      Object.assign(user, scalarUpdates);
+
+      if (role_guid !== undefined) {
+        const role = await this.rolesRepository.findOne({ where: { guid: role_guid } });
+        if (!role) {
+          throw new BadRequestException(`Role ${role_guid} not found`);
+        }
+        user.role = role;
+        user.role_id = role.guid;
+        user.role_guid = role.guid;
+      }
+
+      if (is_internal !== undefined) {
+        user.is_internal = is_internal ? 1 : 0;
+      }
+
+      user.updated_at = new Date();
       return await this.userRepository.save(user);
     } catch (error) {
-      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+      if (error instanceof NotFoundException || error instanceof BadRequestException || error instanceof ForbiddenException) {
         throw error;
       }
       throw new InternalServerErrorException('Failed to update user');
     }
   }
 
-  async toggleStatus(uguid: string, isActive: boolean): Promise<User> {
+  async toggleStatus(
+    uguid: string,
+    isActive: boolean,
+    requestingUser: { organizationId: string | null; role: string },
+  ): Promise<User> {
     try {
       const user = await this.userRepository.findOne({
         where: { uguid, is_deleted: false },
@@ -832,11 +868,15 @@ export class AuthService {
         throw new NotFoundException(`User with ID ${uguid} not found`);
       }
 
+      if (requestingUser.role !== 'SuperAdmin' && requestingUser.organizationId !== user.organizationId) {
+        throw new ForbiddenException('Access denied to this organization');
+      }
+
       user.is_active = isActive ? 1 : 0;
       user.updated_at = new Date();
       return await this.userRepository.save(user);
     } catch (error) {
-      if (error instanceof NotFoundException) {
+      if (error instanceof NotFoundException || error instanceof ForbiddenException) {
         throw error;
       }
       throw new InternalServerErrorException('Failed to update user status');
