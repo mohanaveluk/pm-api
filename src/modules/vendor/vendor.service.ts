@@ -597,6 +597,12 @@ export class VendorService {
       qb.andWhere('v.taxRegistrationNumber = :trn', { trn: query.taxRegistrationNumber });
     }
     //if (query.industryCategoryId)   qb.andWhere('v.industryCategoryId = :icId',  { icId: query.industryCategoryId });
+    // productCategories is a JSON array of Material Category ids.
+    if (query.materialCategoryId) {
+      qb.andWhere('JSON_CONTAINS(v.productCategories, :mcId)', {
+        mcId: JSON.stringify(query.materialCategoryId),
+      });
+    }
     if (query.parentCompanyId)      qb.andWhere('v.parentCompanyId = :pcId',     { pcId: query.parentCompanyId });
     if (query.vendorTypeId)         qb.andWhere('v.vendorTypeId = :vTypeId',     { vTypeId: query.vendorTypeId });
     if (query.vendorStatus)         qb.andWhere('v.vendorStatus = :vStatus',     { vStatus: query.vendorStatus });

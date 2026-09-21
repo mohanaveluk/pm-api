@@ -89,6 +89,27 @@ export class CloudStorageService {
     }
   }
 
+  // True when the URL points at an object under the given folder of our bucket.
+  isUnderFolder(fileUrl: string, folder: string): boolean {
+    const name = this.extractFileNameFromUrl(fileUrl);
+    return !!name && !name.includes('..') && name.startsWith(`${folder}/`);
+  }
+
+  // Reads an object back through the service account, so documents stay
+  // downloadable even when the bucket itself is not public.
+  async downloadFile(fileUrl: string): Promise<Buffer> {
+    const fileName = this.extractFileNameFromUrl(fileUrl);
+    if (!fileName) throw new BadRequestException('Invalid file URL');
+    try {
+      const [contents] = await this.storage.bucket(this.bucketName).file(fileName).download();
+      return contents;
+    } catch (error) {
+      throw new BadRequestException(
+        `Unable to read file: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   private extractFileNameFromUrl(url: string): string | null {
     try {
       const urlParts = url.split('/');

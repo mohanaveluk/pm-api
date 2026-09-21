@@ -1,11 +1,12 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsString, Length, Matches } from 'class-validator';
+import { IsEmail, IsOptional, IsString, Length, Matches } from 'class-validator';
 
 export class VerifyEmailDto {
   @ApiProperty({
     example: 'user@example.com',
     description: 'Email address to verify'
   })
+  @IsOptional()
   @IsEmail({}, {
     message: 'Please provide a valid email address'
   })

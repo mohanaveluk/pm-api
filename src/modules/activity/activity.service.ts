@@ -53,9 +53,7 @@ export class ActivityService {
     dto: CreateActivityDto,
     createdBy: string,
   ): Promise<ActivityResponseDto> {
-    const mapping = await this.validateMapping(organizationId, dto.departmentDisciplineId);
-
-    this.assertMappingConsistency(mapping, dto.departmentId, dto.disciplineId);
+    const mapping = await this.resolveMapping(organizationId, dto, createdBy);
 
     const [dept, disc] = await Promise.all([
       this.loadDepartment(mapping.departmentId),
@@ -112,7 +110,7 @@ export class ActivityService {
     dto: BulkCreateActivityDto,
     createdBy: string,
   ): Promise<BulkCreateActivityResultDto> {
-    const mapping = await this.validateMapping(organizationId, dto.departmentDisciplineId);
+    const mapping = await this.resolveMapping(organizationId, dto, createdBy);
 
     const [dept, disc] = await Promise.all([
       this.loadDepartment(mapping.departmentId),
@@ -333,7 +331,7 @@ export class ActivityService {
 
     // code is server-generated and immutable — the DTO no longer carries it,
     // but guard here in case a caller bypasses DTO validation.
-    if ((dto as any).code !== undefined) {
+    if ((dto as any).code !== undefined && (dto as any).code !== activity.code) {
       throw new ConflictException('Activity code is server-generated and cannot be changed');
     }
     if (dto.name && dto.name !== activity.name) {
@@ -395,6 +393,61 @@ export class ActivityService {
     if (!mapping) throw new NotFoundException('Department-Discipline mapping not found');
     if (!mapping.isActive) throw new BadRequestException('Department-Discipline mapping is inactive');
     return mapping;
+  }
+
+  // A discipline carries its own department, so callers only name the discipline.
+  // The department-discipline mapping row the activity hangs off is found — or
+  // created — here. Passing a mapping id directly is still honoured.
+  private async resolveMapping(
+    organizationId: string,
+    ref: { disciplineId?: string; departmentId?: string; departmentDisciplineId?: string },
+    createdBy: string,
+  ): Promise<DepartmentDiscipline> {
+    if (ref.departmentDisciplineId) {
+      const mapping = await this.validateMapping(organizationId, ref.departmentDisciplineId);
+      if (ref.departmentId) this.assertMappingConsistency(mapping, ref.departmentId, mapping.disciplineId);
+      if (ref.disciplineId) this.assertMappingConsistency(mapping, mapping.departmentId, ref.disciplineId);
+      return mapping;
+    }
+
+    if (!ref.disciplineId) throw new BadRequestException('disciplineId is required');
+
+    const discipline = await this.discRepo.findOne({
+      where: { id: ref.disciplineId, organizationId, isDeleted: false },
+    });
+    if (!discipline) throw new NotFoundException('Discipline not found');
+    if (!discipline.isActive) throw new BadRequestException('Discipline is inactive');
+    if (!discipline.departmentId) {
+      throw new BadRequestException('This discipline has no department assigned. Assign one on the Discipline first.');
+    }
+    if (ref.departmentId && ref.departmentId !== discipline.departmentId) {
+      throw new BadRequestException("departmentId does not match the discipline's department");
+    }
+
+    // The unique key ignores is_deleted, so a soft-deleted row has to be revived, not re-inserted.
+    const existing = await this.mappingRepo.findOne({
+      where: { organizationId, departmentId: discipline.departmentId, disciplineId: discipline.id },
+    });
+    if (existing) {
+      if (existing.isDeleted) {
+        existing.isDeleted = false;
+        existing.deletedAt = null as any;
+        existing.deletedBy = null as any;
+        existing.isActive = true;
+        existing.updatedBy = createdBy;
+        return this.mappingRepo.save(existing);
+      }
+      if (!existing.isActive) throw new BadRequestException('Department-Discipline mapping is inactive');
+      return existing;
+    }
+
+    return this.mappingRepo.save(this.mappingRepo.create({
+      dguid: uuidv4(),
+      organizationId,
+      departmentId: discipline.departmentId,
+      disciplineId: discipline.id,
+      createdBy,
+    }));
   }
 
   private assertMappingConsistency(

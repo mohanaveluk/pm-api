@@ -11,9 +11,11 @@ import { EmailVerificationToken } from './entity/email-verification-token.entity
 import { User } from '../user/entity/user.entity';
 import { RoleEntity } from '../user/entity/roles.entity';
 import { EmailService } from 'src/shared/email/email.service';
+import { CloudStorageService } from 'src/common/services/cloud-storage.service';
+import { OrganizationDocument } from './entity/organization-document.entity';
 import { RegisterOrganizationDto } from './dto/register-organization.dto';
 import { VerifyOrganizationEmailDto } from './dto/verify-email.dto';
-import { UpdateOrganizationDto } from './dto/update-organization.dto';
+import { UpdateOrganizationDto, OrganizationDocumentInputDto } from './dto/update-organization.dto';
 import { orgRegistrationTemplate } from 'src/shared/email/templates/org-registration.template';
 import { orgAdminCredentialsTemplate } from 'src/shared/email/templates/org-admin-credentials.template';
 import { VerifyOrganizationRegistration } from 'src/shared/email/templates/verify-email-template';
@@ -34,6 +36,9 @@ export class OrganizationService {
     @InjectRepository(RoleEntity)
     private readonly roleRepo: Repository<RoleEntity>,
     private readonly emailService: EmailService,
+    @InjectRepository(OrganizationDocument)
+    private readonly docRepo: Repository<OrganizationDocument>,
+    private readonly cloudStorage: CloudStorageService,
   ) {}
 
   async register(dto: RegisterOrganizationDto, domain: string): Promise<{ success: boolean; message: string }> {
@@ -174,9 +179,118 @@ export class OrganizationService {
       if (conflict) throw new ConflictException('Email already in use');
     }
 
-    Object.assign(org, dto);
+    const { documents, ...profile } = dto;
+    Object.assign(org, profile);
     org.updatedBy = updatedBy;
-    return this.orgRepo.save(org);
+    const saved = await this.orgRepo.save(org);
+
+    if (documents !== undefined) await this.syncDocuments(organizationId, documents, updatedBy);
+    return saved;
+  }
+
+  // ── Documents ─────────────────────────────────────────────────────
+
+  async listDocuments(organizationId: string): Promise<OrganizationDocument[]> {
+    return this.docRepo.find({
+      where: { organizationId, isDeleted: false },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  // Stores the binary and returns its metadata — nothing is written to
+  // organization_documents until the profile is saved with the document listed.
+  async uploadDocumentFile(organizationId: string, file: Express.Multer.File) {
+    if (!file) throw new BadRequestException('No file provided');
+    return this.storeFile(organizationId, file);
+  }
+
+  // Makes organization_documents match the list the profile form was saved with:
+  // listed rows are updated (or inserted when new), unlisted rows are deleted.
+  private async syncDocuments(
+    organizationId: string,
+    incoming: OrganizationDocumentInputDto[],
+    by: string,
+  ): Promise<void> {
+    const folder = this.docFolder(organizationId);
+    for (const d of incoming) {
+      // A URL from outside this organization's folder could point at someone
+      // else's file, or (later) get deleted through us — refuse it.
+      if (!this.cloudStorage.isUnderFolder(d.documentUrl, folder)) {
+        throw new BadRequestException(`Document "${d.title}" was not uploaded through this organization`);
+      }
+    }
+
+    const existing = await this.docRepo.find({ where: { organizationId, isDeleted: false } });
+    const byId = new Map(existing.map((e) => [e.id, e]));
+    const keep = new Set<string>();
+    const orphanedUrls: string[] = [];
+
+    for (const d of incoming) {
+      const row = d.id ? byId.get(d.id) : undefined;
+      if (d.id && !row) throw new NotFoundException(`Document ${d.id} not found`);
+
+      if (row) {
+        keep.add(row.id);
+        if (row.documentUrl !== d.documentUrl) orphanedUrls.push(row.documentUrl);
+        Object.assign(row, {
+          title: d.title.trim(),
+          description: d.description?.trim() || null,
+          documentUrl: d.documentUrl,
+          fileName: d.fileName,
+          mimeType: d.mimeType ?? null,
+          fileSizeBytes: d.fileSizeBytes ?? null,
+          updatedBy: by,
+        });
+        await this.docRepo.save(row);
+      } else {
+        await this.docRepo.save(this.docRepo.create({
+          organizationId,
+          title: d.title.trim(),
+          description: d.description?.trim() || null,
+          documentUrl: d.documentUrl,
+          fileName: d.fileName,
+          mimeType: d.mimeType ?? null,
+          fileSizeBytes: d.fileSizeBytes ?? null,
+          uploadedBy: by,
+          updatedBy: by,
+        }));
+      }
+    }
+
+    for (const row of existing) {
+      if (keep.has(row.id)) continue;
+      row.isDeleted = true;
+      row.deletedAt = new Date();
+      row.deletedBy = by;
+      await this.docRepo.save(row);
+      orphanedUrls.push(row.documentUrl);
+    }
+
+    // Only after the database is consistent, so a failure never loses a file that is still referenced.
+    for (const url of orphanedUrls) await this.cloudStorage.deleteFile(url);
+  }
+
+  // By URL rather than id so a document attached but not yet saved can be opened too.
+  async readDocumentFile(organizationId: string, url: string): Promise<Buffer> {
+    if (!url || !this.cloudStorage.isUnderFolder(url, this.docFolder(organizationId))) {
+      throw new NotFoundException('Document not found');
+    }
+    return this.cloudStorage.downloadFile(url);
+  }
+
+  private docFolder(organizationId: string): string {
+    return `pm/organization/${organizationId}`;
+  }
+
+  private async storeFile(organizationId: string, file: Express.Multer.File) {
+    await this.cloudStorage.isFileValid(file);
+    const documentUrl = await this.cloudStorage.uploadFile(file, this.docFolder(organizationId));
+    return {
+      documentUrl,
+      fileName: file.originalname,
+      mimeType: file.mimetype,
+      fileSizeBytes: file.size,
+    };
   }
 
   private async createOrgAdmin(org: Organization): Promise<void> {

@@ -130,7 +130,7 @@ export class DepartmentService {
 
     // code is server-generated and immutable — the DTO no longer carries it,
     // but guard here in case a caller bypasses DTO validation.
-    if ((dto as any).code !== undefined) {
+    if ((dto as any).code !== undefined && (dto as any).code !== dept.code) {
       throw new ConflictException('Department code is server-generated and cannot be changed');
     }
 

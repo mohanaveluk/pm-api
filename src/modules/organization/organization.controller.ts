@@ -1,9 +1,11 @@
 import {
   Controller, Post, Get, Put, Body, UseGuards, Request, HttpCode, HttpStatus,
-  Req,
+  Req, Query, Res, UploadedFile, UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import {
-  ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody,
+  ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody, ApiConsumes,
 } from '@nestjs/swagger';
 import { OrganizationService } from './organization.service';
 import { RegisterOrganizationDto } from './dto/register-organization.dto';
@@ -14,7 +16,7 @@ import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
 import { Roles } from 'src/common/decorators/roles.decorator';
 import { Public } from 'src/common/decorators/public.decorator';
-import { Request as ExpRequest } from 'express';
+import { Request as ExpRequest, Response } from 'express';
 
 @ApiTags('Organizations')
 @Controller('organizations')
@@ -78,5 +80,57 @@ export class OrganizationController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   updateProfile(@Body() dto: UpdateOrganizationDto, @Request() req: any) {
     return this.orgService.updateProfile(req.user.organizationId, dto, req.user.email);
+  }
+
+  // ── Documents (OrganizationAdmin only, scoped to the caller's organization) ──
+  // Files are uploaded here; the organization_documents rows themselves are
+  // written when the profile is saved (PUT /organizations/profile with `documents`).
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('OrganizationAdmin')
+  @Get('documents')
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: "List the organization's saved documents" })
+  listDocuments(@Request() req: any) {
+    return this.orgService.listDocuments(req.user.organizationId);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('OrganizationAdmin')
+  @Post('documents/upload')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiBearerAuth('JWT-auth')
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Upload a document file and get its storage metadata',
+    description:
+      'Stores the binary only. Nothing is written to organization_documents until the ' +
+      'profile is saved with the document in its documents list.',
+  })
+  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
+  uploadDocument(@UploadedFile() file: Express.Multer.File, @Request() req: any) {
+    return this.orgService.uploadDocumentFile(req.user.organizationId, file);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('OrganizationAdmin')
+  @Get('documents/file')
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Stream a file - inline for viewing, attachment (default) for download' })
+  async downloadDocument(
+    @Query('url') url: string,
+    @Query('name') name: string,
+    @Query('inline') inline: string,
+    @Request() req: any,
+    @Res() res: Response,
+  ) {
+    const content = await this.orgService.readDocumentFile(req.user.organizationId, url);
+    const disposition = inline === 'true' ? 'inline' : 'attachment';
+    res.set({
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': String(content.length),
+      'Content-Disposition': `${disposition}; filename*=UTF-8''${encodeURIComponent(name || 'document')}`,
+    });
+    res.send(content);
   }
 }

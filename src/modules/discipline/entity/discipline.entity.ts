@@ -3,6 +3,7 @@ import {
   UpdateDateColumn, Index, ManyToOne, JoinColumn,
 } from 'typeorm';
 import { Organization } from '../../organization/entity/organization.entity';
+import { Department } from '../../department/entity/department.entity';
 
 @Entity('disciplines')
 @Index(['organizationId', 'code'], { unique: true })
@@ -27,7 +28,17 @@ export class Discipline {
   @Column({ length: 255 })
   name: string;
 
-  @Column({ length: 50, nullable: true })
+  // A discipline belongs to exactly one department (organization policy).
+  // Nullable only so disciplines created before this column existed still load;
+  // create requires it.
+  @Column({ nullable: true })
+  departmentId: string;
+
+  @ManyToOne(() => Department, { nullable: true, onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'departmentId' })
+  department: Department;
+
+  @Column({ length: 50, nullable: true, select: false })
   shortName: string;
 
   @Column({ type: 'text', nullable: true })

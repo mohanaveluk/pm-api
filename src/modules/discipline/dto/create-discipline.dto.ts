@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
-  IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, Length, Min,
+  IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, Length, Min,
 } from 'class-validator';
 
 export class CreateDisciplineDto {
@@ -13,11 +13,10 @@ export class CreateDisciplineDto {
   @Length(2, 255)
   name: string;
 
-  @ApiPropertyOptional({ example: 'Eng', description: 'Short display name (max 50 chars)' })
-  @IsOptional()
-  @IsString()
-  @Length(1, 50)
-  shortName?: string;
+  @ApiProperty({ example: 'uuid-of-department', description: 'The single active department this discipline belongs to' })
+  @IsUUID()
+  @IsNotEmpty()
+  departmentId: string;
 
   @ApiPropertyOptional({ example: 'Handles all engineering activities' })
   @IsOptional()
