@@ -1571,6 +1571,18 @@ describe('VendorService', () => {
       expect(Array.isArray(result.items)).toBe(true);
     });
 
+    it('filters by materialCategoryId against the productCategories JSON array', async () => {
+      const qb = makeQb();
+      vendorRepo.createQueryBuilder.mockReturnValue(qb);
+      const id = '66666666-6666-4666-8666-666666666666';
+
+      await service.findAll({ materialCategoryId: id } as any, ORG_A);
+
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        'JSON_CONTAINS(v.productCategories, :mcId)', { mcId: JSON.stringify(id) },
+      );
+    });
+
     it('scopes an external caller to only the vendors they created', async () => {
       const qb = makeQb();
       vendorRepo.createQueryBuilder.mockReturnValue(qb);

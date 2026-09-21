@@ -5,6 +5,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, ILike } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { Discipline } from './entity/discipline.entity';
+import { Department } from '../department/entity/department.entity';
 import {
   MasterCodeService,
   MasterSequenceKey,
@@ -21,6 +22,8 @@ export class DisciplineService {
   constructor(
     @InjectRepository(Discipline)
     private readonly deptRepo: Repository<Discipline>,
+    @InjectRepository(Department)
+    private readonly departmentRepo: Repository<Department>,
     private readonly masterCodeService: MasterCodeService,
   ) {}
 
@@ -29,6 +32,8 @@ export class DisciplineService {
     dto: CreateDisciplineDto,
     createdBy: string,
   ): Promise<DisciplineResponseDto> {
+    await this.assertActiveDepartment(organizationId, dto.departmentId);
+
     // code is server-generated: a per-organization sequence starting at 0001.
     // Generation and insert share one transaction, under a row lock on the
     // counter, so concurrent creates cannot be handed the same number.
@@ -78,7 +83,6 @@ export class DisciplineService {
       where.push(
         { ...base, name:      ILike(`%${search}%`) },
         { ...base, code:      ILike(`%${search}%`) },
-        { ...base, shortName: ILike(`%${search}%`) },
       );
     } else {
       where.push(base);
@@ -92,7 +96,8 @@ export class DisciplineService {
       where,
       relations: {
         organization: true,
-      },       
+        department: true,
+      },
       order: { [safeSortBy]: sortOrder },
       skip: (page - 1) * limit,
       take: limit,
@@ -115,6 +120,7 @@ export class DisciplineService {
   async findActive(organizationId: string): Promise<DisciplineResponseDto[]> {
     const depts = await this.deptRepo.find({
       where: { organizationId, isActive: true, isDeleted: false },
+      relations: { department: true },
       order: { displayOrder: 'ASC', name: 'ASC' },
     });
     return depts.map(d => this.toResponse(d));
@@ -128,17 +134,24 @@ export class DisciplineService {
   ): Promise<DisciplineResponseDto> {
     const dept = await this.findActiveOrThrow(organizationId, id);
 
+    if (dto.departmentId !== undefined && dto.departmentId !== dept.departmentId) {
+      await this.assertActiveDepartment(organizationId, dto.departmentId);
+    }
+
     // code is server-generated and immutable — the DTO no longer carries it,
     // but guard here in case a caller bypasses DTO validation.
-    if ((dto as any).code !== undefined) {
+    if ((dto as any).code !== undefined && (dto as any).code !== dept.code) {
       throw new ConflictException('Discipline code is server-generated and cannot be changed');
     }
 
     Object.assign(dept, dto);
     dept.updatedBy = updatedBy;
 
-    const saved = await this.deptRepo.save(dept);
-    return this.toResponse(saved);
+    // Detach the loaded relation so the new departmentId wins, then re-read
+    // so the response carries the current department.
+    (dept as any).department = undefined;
+    await this.deptRepo.save(dept);
+    return this.findOne(organizationId, id);
   }
 
   async remove(organizationId: string, id: string, deletedBy: string): Promise<void> {
@@ -157,9 +170,20 @@ export class DisciplineService {
   private async findActiveOrThrow(organizationId: string, id: string): Promise<Discipline> {
     const dept = await this.deptRepo.findOne({
       where: { id, organizationId, isDeleted: false },
+      relations: { organization: true, department: true },
     });
     if (!dept) throw new NotFoundException(`Discipline not found`);
     return dept;
+  }
+
+  // The department must exist in the caller's organization and be active —
+  // a discipline cannot be filed under a deactivated or foreign department.
+  private async assertActiveDepartment(organizationId: string, departmentId: string): Promise<void> {
+    const department = await this.departmentRepo.findOne({
+      where: { id: departmentId, organizationId, isDeleted: false },
+    });
+    if (!department) throw new NotFoundException('Department not found in your organization');
+    if (!department.isActive) throw new BadRequestException('Department is inactive');
   }
 
   // Retained as a safety net only — code is server-generated, so this can no
@@ -185,7 +209,10 @@ export class DisciplineService {
       organization:   {id: dept.organizationId, name: dept.organization?.organizationName},
       code:           dept.code,
       name:           dept.name,
-      shortName:      dept.shortName,
+      departmentId:   dept.departmentId,
+      department:     dept.department
+        ? { id: dept.department.id, name: dept.department.name, code: dept.department.code }
+        : undefined,
       description:    dept.description,
       displayOrder:   dept.displayOrder,
       isActive:       dept.isActive,

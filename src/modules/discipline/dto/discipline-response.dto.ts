@@ -7,7 +7,8 @@ export class DisciplineResponseDto {
   @ApiProperty() organization?:   {id: string, name?: string, code?: string};
   @ApiProperty() code: string;
   @ApiProperty() name: string;
-  @ApiPropertyOptional() shortName: string;
+  @ApiPropertyOptional() departmentId?: string;
+  @ApiPropertyOptional() department?: { id: string; name?: string; code?: string };
   @ApiPropertyOptional() description: string;
   @ApiProperty() displayOrder: number;
   @ApiProperty() isActive: boolean;

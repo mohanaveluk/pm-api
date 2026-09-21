@@ -9,20 +9,32 @@ export class CreateActivityDto {
   // NOTE: `code` is absent by design — it is server-generated as a
   // per-organization sequence starting at 0001. Supplying it has no effect.
 
-  @ApiProperty({ example: 'uuid-dd', description: 'DepartmentDiscipline mapping UUID' })
-  @IsUUID()
-  @IsNotEmpty()
-  departmentDisciplineId: string;
-
-  @ApiProperty({ example: 'uuid-dept', description: 'Department UUID (must match the mapping)' })
-  @IsUUID()
-  @IsNotEmpty()
-  departmentId: string;
-
-  @ApiProperty({ example: 'uuid-disc', description: 'Discipline UUID (must match the mapping)' })
+  @ApiProperty({
+    example: 'uuid-disc',
+    description:
+      'Discipline UUID. The department is taken from the discipline itself (a discipline ' +
+      'belongs to exactly one department); the department-discipline mapping is resolved ' +
+      'or created automatically.',
+  })
   @IsUUID()
   @IsNotEmpty()
   disciplineId: string;
+
+  @ApiPropertyOptional({
+    example: 'uuid-dept',
+    description: "Optional. If supplied it must equal the discipline's own department.",
+  })
+  @IsOptional()
+  @IsUUID()
+  departmentId?: string;
+
+  @ApiPropertyOptional({
+    example: 'uuid-dd',
+    description: 'Deprecated. Ignored unless supplied; the mapping is normally derived from disciplineId.',
+  })
+  @IsOptional()
+  @IsUUID()
+  departmentDisciplineId?: string;
 
   @ApiProperty({ example: 'Request for Quotation', description: 'Full activity name' })
   @IsString()
@@ -161,10 +173,15 @@ export class BulkActivityItemDto {
 }
 
 export class BulkCreateActivityDto {
-  @ApiProperty({ example: 'uuid-dd', description: 'DepartmentDiscipline mapping UUID' })
+  @ApiProperty({ example: 'uuid-disc', description: 'Discipline UUID — its department is used' })
   @IsUUID()
   @IsNotEmpty()
-  departmentDisciplineId: string;
+  disciplineId: string;
+
+  @ApiPropertyOptional({ example: 'uuid-dd', description: 'Deprecated. Derived from disciplineId when omitted.' })
+  @IsOptional()
+  @IsUUID()
+  departmentDisciplineId?: string;
 
   @ApiProperty({ type: [BulkActivityItemDto], description: 'Activities to create under this mapping' })
   activities: BulkActivityItemDto[];

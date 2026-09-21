@@ -66,6 +66,13 @@ export class VendorQueryDto {
   @IsOptional() @IsUUID()
   industryCategoryId?: string;
 
+  @ApiPropertyOptional({
+    example: 'uuid-of-material-category',
+    description: 'Only vendors whose productCategories include this Material Category',
+  })
+  @IsOptional() @IsUUID()
+  materialCategoryId?: string;
+
   @ApiPropertyOptional({ example: 'uuid-of-parent-vendor' })
   @IsOptional() @IsUUID()
   parentCompanyId?: string;
