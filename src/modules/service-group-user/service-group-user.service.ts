@@ -1,10 +1,11 @@
 import {
   Injectable, NotFoundException, ConflictException, BadRequestException,
-  InternalServerErrorException, Logger,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, DataSource, In, Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
+import { CustomLoggerService } from '../logger/custom-logger.service';
 import { ServiceGroupUser } from './entities/service-group-user.entity';
 import { ServiceGroup } from '../service-group/entities/service-group.entity';
 import { ServiceGroupActivity } from '../service-group/entities/service-group-activity.entity';
@@ -30,8 +31,6 @@ const ALLOWED_SORT_FIELDS = new Set(['createdAt', 'isPrimary', 'assignmentType']
 
 @Injectable()
 export class ServiceGroupUserService {
-  private readonly logger = new Logger(ServiceGroupUserService.name);
-
   constructor(
     @InjectRepository(ServiceGroupUser)
     private readonly sguRepo: Repository<ServiceGroupUser>,
@@ -42,6 +41,7 @@ export class ServiceGroupUserService {
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     private readonly dataSource: DataSource,
+    private readonly logger: CustomLoggerService,
   ) {}
 
   // ── Assign users to a service group (upsert) ────────────────────
@@ -147,7 +147,10 @@ export class ServiceGroupUserService {
       };
     } catch (err: any) {
       await queryRunner.rollbackTransaction();
-      this.logger.error('Failed to assign service group users', err?.message);
+      this.logger.error(
+        `Failed to assign users to service group ${dto.serviceGroupId} in organization ${organizationId}: ${err?.message}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       throw new InternalServerErrorException('Unable to create assignments');
     } finally {
       await queryRunner.release();
@@ -294,7 +297,10 @@ export class ServiceGroupUserService {
       };
     } catch (err: any) {
       await queryRunner.rollbackTransaction();
-      this.logger.error('Failed to sync service group users', err?.message);
+      this.logger.error(
+        `Failed to sync users for service group ${serviceGroupId} in organization ${organizationId}: ${err?.message}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       throw new InternalServerErrorException('Unable to synchronize user assignments');
     } finally {
       await queryRunner.release();
@@ -598,7 +604,10 @@ export class ServiceGroupUserService {
         await this.sguRepo.save(a);
         succeeded++;
       } catch (err: any) {
-        this.logger.warn(`Bulk status change failed for assignment ${a.id}`, err?.message);
+        this.logger.warn(
+          `Bulk status change failed for assignment ${a.id}: ${err?.message}`,
+          err instanceof Error ? err.stack : String(err),
+        );
         failedIds.push(a.id);
       }
     }

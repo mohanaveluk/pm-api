@@ -2,7 +2,6 @@ import {
   BadRequestException,
   Injectable,
   InternalServerErrorException,
-  Logger,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -19,6 +18,7 @@ import { UomType } from '../unit-of-measurement/enums/uom-type.enum';
 import { MaterialStatus } from './enums/material-status.enum';
 import { MaterialCodeService } from './material-code.service';
 import { MasterCodeService, MasterSequenceKey } from 'src/common/services/master-code.service';
+import { CustomLoggerService } from '../logger/custom-logger.service';
 
 export const MATERIAL_IMPORT_MAX_BYTES = 5 * 1024 * 1024;
 const MAX_ROWS = 5000;
@@ -92,8 +92,6 @@ function canon(v: string): string {
 
 @Injectable()
 export class MaterialImportService {
-  private readonly logger = new Logger(MaterialImportService.name);
-
   constructor(
     @InjectRepository(Material) private readonly materialRepo: Repository<Material>,
     @InjectRepository(MaterialCategory) private readonly categoryRepo: Repository<MaterialCategory>,
@@ -102,6 +100,7 @@ export class MaterialImportService {
     private readonly dataSource: DataSource,
     private readonly codeService: MaterialCodeService,
     private readonly masterCodeService: MasterCodeService,
+    private readonly logger: CustomLoggerService,
   ) {}
 
   // Entry point: parse, validate everything, then write in ONE transaction.
@@ -178,7 +177,10 @@ export class MaterialImportService {
       return result;
     } catch (err: any) {
       await queryRunner.rollbackTransaction();
-      this.logger.error(`Material import rolled back: ${err?.message}`);
+      this.logger.error(
+        `Material import rolled back for organization ${organizationId} by ${userEmail}: ${err?.message}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       throw new InternalServerErrorException(
         `Import failed and every change was rolled back. ${err?.message ?? ''}`.trim(),
       );

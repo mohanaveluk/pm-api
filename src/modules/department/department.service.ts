@@ -9,6 +9,7 @@ import {
   MasterCodeService,
   MasterSequenceKey,
 } from 'src/common/services/master-code.service';
+import { CustomLoggerService } from '../logger/custom-logger.service';
 import { CreateDepartmentDto } from './dto/create-department.dto';
 import { UpdateDepartmentDto } from './dto/update-department.dto';
 import { DepartmentQueryDto } from './dto/department-query.dto';
@@ -22,6 +23,7 @@ export class DepartmentService {
     @InjectRepository(Department)
     private readonly deptRepo: Repository<Department>,
     private readonly masterCodeService: MasterCodeService,
+    private readonly logger: CustomLoggerService,
   ) {}
 
   async create(
@@ -48,6 +50,10 @@ export class DepartmentService {
         return queryRunner.manager.save(Department, dept);
       },
     ).catch(err => {
+      this.logger.error(
+        `Failed to create department "${dto.name}" in organization ${organizationId}: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       if (err?.code === 'ER_DUP_ENTRY') {
         throw new ConflictException(
           'A Department with this code already exists in your organization',
@@ -137,8 +143,16 @@ export class DepartmentService {
     Object.assign(dept, dto);
     dept.updatedBy = updatedBy;
 
-    const saved = await this.deptRepo.save(dept);
-    return this.toResponse(saved);
+    try {
+      const saved = await this.deptRepo.save(dept);
+      return this.toResponse(saved);
+    } catch (err) {
+      this.logger.error(
+        `Failed to update department ${id} in organization ${organizationId}: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+      throw err;
+    }
   }
 
   async remove(organizationId: string, id: string, deletedBy: string): Promise<void> {

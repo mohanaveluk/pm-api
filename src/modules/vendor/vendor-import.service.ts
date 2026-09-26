@@ -2,7 +2,6 @@ import {
   BadRequestException,
   Injectable,
   InternalServerErrorException,
-  Logger,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -21,6 +20,7 @@ import {
   MasterCodeService,
   MasterSequenceKey,
 } from 'src/common/services/master-code.service';
+import { CustomLoggerService } from '../logger/custom-logger.service';
 
 export const VENDOR_IMPORT_MAX_BYTES = 5 * 1024 * 1024;
 const MAX_ROWS = 5000;
@@ -102,8 +102,6 @@ interface PlannedRow {
 
 @Injectable()
 export class VendorImportService {
-  private readonly logger = new Logger(VendorImportService.name);
-
   constructor(
     @InjectRepository(Vendor) private readonly vendorRepo: Repository<Vendor>,
     @InjectRepository(VendorType) private readonly vendorTypeRepo: Repository<VendorType>,
@@ -112,6 +110,7 @@ export class VendorImportService {
     private readonly dataSource: DataSource,
     private readonly vendorCodeService: VendorCodeService,
     private readonly masterCodeService: MasterCodeService,
+    private readonly logger: CustomLoggerService,
   ) {}
 
   // Entry point: parse, validate everything, then write in ONE transaction.
@@ -233,7 +232,10 @@ export class VendorImportService {
       return result;
     } catch (err: any) {
       await queryRunner.rollbackTransaction();
-      this.logger.error(`Vendor import rolled back: ${err?.message}`);
+      this.logger.error(
+        `Vendor import rolled back for organization ${organizationId} by ${userEmail}: ${err?.message}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       throw new InternalServerErrorException(
         `Import failed and every change was rolled back. ${err?.message ?? ''}`.trim(),
       );

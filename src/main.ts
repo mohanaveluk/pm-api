@@ -3,7 +3,6 @@ import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ValidationPipe } from '@nestjs/common';
 import * as http from 'http';
-import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { JwtService } from '@nestjs/jwt';
@@ -30,7 +29,8 @@ async function bootstrap() {
   app.setGlobalPrefix('api/v1');
 
   app.useGlobalPipes(new ValidationPipe({ transform: true }));
-  app.useGlobalFilters(new AllExceptionsFilter());
+  // AllExceptionsFilter is registered via APP_FILTER in AppModule instead of
+  // here, so Nest's DI can inject CustomLoggerService into it.
   app.useGlobalInterceptors(new LoggingInterceptor());
 
 

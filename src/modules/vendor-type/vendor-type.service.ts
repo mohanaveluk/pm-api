@@ -9,6 +9,7 @@ import {
   MasterCodeService,
   MasterSequenceKey,
 } from 'src/common/services/master-code.service';
+import { CustomLoggerService } from '../logger/custom-logger.service';
 import { CreateVendorTypeDto } from './dto/create-vendor-type.dto';
 import { UpdateVendorTypeDto } from './dto/update-vendor-type.dto';
 import { VendorTypeQueryDto } from './dto/vendor-type-query.dto';
@@ -22,6 +23,7 @@ export class VendorTypeService {
     @InjectRepository(VendorType)
     private readonly vtRepo: Repository<VendorType>,
     private readonly masterCodeService: MasterCodeService,
+    private readonly logger: CustomLoggerService,
   ) {}
 
   async create(
@@ -48,6 +50,10 @@ export class VendorTypeService {
         return queryRunner.manager.save(VendorType, vt);
       },
     ).catch(err => {
+      this.logger.error(
+        `Failed to create vendor type "${dto.name}" in organization ${organizationId}: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       if (err?.code === 'ER_DUP_ENTRY') {
         throw new ConflictException(
           'A Vendor Type with this code already exists in your organization',
@@ -137,8 +143,16 @@ export class VendorTypeService {
     Object.assign(vt, dto);
     vt.updatedBy = updatedBy;
 
-    const saved = await this.vtRepo.save(vt);
-    return this.toResponse(saved);
+    try {
+      const saved = await this.vtRepo.save(vt);
+      return this.toResponse(saved);
+    } catch (err) {
+      this.logger.error(
+        `Failed to update vendor type ${id} in organization ${organizationId}: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+      throw err;
+    }
   }
 
   async remove(organizationId: string, id: string, deletedBy: string): Promise<void> {

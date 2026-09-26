@@ -1,7 +1,8 @@
 import { UserService } from './modules/user/user.service';
 import { UserController } from './modules/user/user.controller';
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_FILTER } from '@nestjs/core';
+import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -89,6 +90,10 @@ import { User } from './modules/user/entity/user.entity';
     {
       provide: APP_GUARD,
       useClass: SubscriptionEnforcementGuard,
+    },
+    {
+      provide: APP_FILTER,
+      useClass: AllExceptionsFilter,
     },
   ],
 })

@@ -10,6 +10,7 @@ import {
   MasterCodeService,
   MasterSequenceKey,
 } from 'src/common/services/master-code.service';
+import { CustomLoggerService } from '../logger/custom-logger.service';
 import { CreateDisciplineDto } from './dto/create-discipline.dto';
 import { UpdateDisciplineDto } from './dto/update-discipline.dto';
 import { DisciplineQueryDto } from './dto/discipline-query.dto';
@@ -25,6 +26,7 @@ export class DisciplineService {
     @InjectRepository(Department)
     private readonly departmentRepo: Repository<Department>,
     private readonly masterCodeService: MasterCodeService,
+    private readonly logger: CustomLoggerService,
   ) {}
 
   async create(
@@ -53,6 +55,10 @@ export class DisciplineService {
         return queryRunner.manager.save(Discipline, disc);
       },
     ).catch(err => {
+      this.logger.error(
+        `Failed to create discipline "${dto.name}" in organization ${organizationId}: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       if (err?.code === 'ER_DUP_ENTRY') {
         throw new ConflictException(
           'A Discipline with this code already exists in your organization',
@@ -150,7 +156,15 @@ export class DisciplineService {
     // Detach the loaded relation so the new departmentId wins, then re-read
     // so the response carries the current department.
     (dept as any).department = undefined;
-    await this.deptRepo.save(dept);
+    try {
+      await this.deptRepo.save(dept);
+    } catch (err) {
+      this.logger.error(
+        `Failed to update discipline ${id} in organization ${organizationId}: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+      throw err;
+    }
     return this.findOne(organizationId, id);
   }
 

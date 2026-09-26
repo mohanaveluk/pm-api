@@ -8,6 +8,7 @@ import { Repository } from 'typeorm';
 import { UserRepository } from './user.repository';
 import { User } from './entity/user.entity';
 import { RoleEntity } from './entity/roles.entity';
+import { CustomLoggerService } from '../logger/custom-logger.service';
 
 @Injectable()
 export class UserService {
@@ -17,6 +18,7 @@ export class UserService {
         private readonly userRepo: Repository<User>,
         @InjectRepository(RoleEntity)
         private readonly roleRepo: Repository<RoleEntity>,
+        private readonly logger: CustomLoggerService,
     ){}
 
     async validateAccount(uniqueId) {
@@ -30,6 +32,10 @@ export class UserService {
             }
 
         } catch (error) {
+            this.logger.error(
+                `Failed to validate account ${uniqueId}: ${error instanceof Error ? error.message : String(error)}`,
+                error instanceof Error ? error.stack : String(error),
+            );
             throw new NotFoundException('Failed to get user');
         }
     }

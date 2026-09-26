@@ -5,12 +5,40 @@ import {
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
-import { HttpAdapterHost } from '@nestjs/core';
 import { Request, Response } from 'express';
+import { CustomLoggerService } from '../../modules/logger/custom-logger.service';
 
+const SENSITIVE_FIELDS = new Set([
+  'password', 'newpassword', 'oldpassword', 'confirmpassword',
+  'otp', 'otpcode', 'token', 'accesstoken', 'refreshtoken',
+  'secret', 'apikey', 'authorization',
+]);
+
+// Deep-redacts sensitive fields before the request body ever reaches the log
+// table — this is now a real write path (it was previously dead code), and a
+// login/register/reset-password body must never land in plaintext logs.
+function redact(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redact);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, v]) => [
+        key,
+        SENSITIVE_FIELDS.has(key.toLowerCase()) ? '[REDACTED]' : redact(v),
+      ]),
+    );
+  }
+  return value;
+}
+
+// Catches every exception that reaches the HTTP layer — including ones that
+// never touch a service at all, such as a DTO failing class-validator before
+// the controller method even runs — and records it to the log table before
+// responding. This is the only place such errors can be logged at all: by
+// the time a controller-facing try/catch could see them, the response has
+// already been decided.
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
-  constructor() {}
+  constructor(private readonly logger: CustomLoggerService) {}
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
@@ -26,28 +54,23 @@ export class AllExceptionsFilter implements ExceptionFilter {
       ? exception.getResponse()
       : 'Internal server error';
 
-      const logMessage = {
-        method: request.method,
-        url: request.url,
-        body: request.body,
-        query: request.query,
-        params: request.params,
-        httpStatus,
-        message: JSON.stringify(message),
-      };
+    const requestUser = (request as any).user;
+    const logMessage = {
+      method: request.method,
+      url: request.url,
+      body: redact(request.body),
+      query: request.query,
+      params: request.params,
+      httpStatus,
+      message: JSON.stringify(message),
+      user: requestUser?.email,
+      stack: exception instanceof Error ? exception.stack : undefined,
+    };
 
-    // const responseBody = {
-    //   statusCode: httpStatus,
-    //   timestamp: new Date().toISOString(),
-    //   path: httpAdapter.getRequestUrl(ctx.getRequest()),
-    //   message:
-    //     exception instanceof HttpException
-    //       ? exception.message
-    //       : 'Internal server error',
-    // };
-
-    //this.logger.error(`HTTP Status: ${status} Error Message: ${JSON.stringify(message)}`, JSON.stringify(logMessage));
-    //httpAdapter.reply(ctx.getResponse(), responseBody, httpStatus);
+    this.logger.error(
+      `${request.method} ${request.url} → ${httpStatus}: ${JSON.stringify(message)}`,
+      JSON.stringify(logMessage),
+    );
 
     response.status(httpStatus).json({
       statusCode: httpStatus,

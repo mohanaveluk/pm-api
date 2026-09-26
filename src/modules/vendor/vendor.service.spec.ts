@@ -45,6 +45,7 @@ import { VendorClassification } from './enums/vendor-classification.enum';
 import { VendorProjectStatus } from './enums/vendor-project-status.enum';
 import { VendorDocumentType } from './enums/vendor-document-type.enum';
 import { EmailService } from 'src/shared/email/email.service';
+import { CustomLoggerService } from '../logger/custom-logger.service';
 
 const ORG_A = '11111111-1111-4111-8111-111111111111';
 const ORG_B = '22222222-2222-4222-8222-222222222222';
@@ -197,6 +198,7 @@ describe('VendorService', () => {
         { provide: DataSource,          useValue: dataSource },
         { provide: CloudStorageService, useValue: { isFileValid: jest.fn(), uploadFile: jest.fn() } },
         { provide: EmailService,        useValue: emailService },
+        { provide: CustomLoggerService, useValue: { log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(), verbose: jest.fn() } },
       ],
     }).compile();
 

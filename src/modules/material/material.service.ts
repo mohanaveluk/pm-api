@@ -1,7 +1,6 @@
 import {
   ConflictException,
   Injectable,
-  Logger,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
@@ -41,6 +40,7 @@ import { MaterialCodeService } from './material-code.service';
 import { MaterialUsageValidationService } from './material-usage-validation.service';
 import { User } from '../user/entity/user.entity';
 import { CloudStorageService } from 'src/common/services/cloud-storage.service';
+import { CustomLoggerService } from '../logger/custom-logger.service';
 
 const ALLOWED_SORT_FIELDS = new Set([
   'code', 'shortDescription', 'status', 'criticalityLevel',
@@ -49,8 +49,6 @@ const ALLOWED_SORT_FIELDS = new Set([
 
 @Injectable()
 export class MaterialService {
-  private readonly logger = new Logger(MaterialService.name);
-
   constructor(
     @InjectRepository(Material)
     private readonly materialRepo: Repository<Material>,
@@ -63,11 +61,12 @@ export class MaterialService {
     @InjectRepository(MaterialDocument)
     private readonly documentRepo: Repository<MaterialDocument>,
     @InjectRepository(User)
-    private userRepository: Repository<User>,    
+    private userRepository: Repository<User>,
     private readonly dataSource: DataSource,
     private readonly codeService: MaterialCodeService,
     private readonly usageValidation: MaterialUsageValidationService,
     private readonly cloudStorageService: CloudStorageService,
+    private readonly logger: CustomLoggerService,
   ) {}
 
   // ── Dependency validators ─────────────────────────────────────────────
@@ -739,6 +738,10 @@ export class MaterialService {
       return this.findOne(material.id, organizationId);
     } catch (err) {
       await queryRunner.rollbackTransaction();
+      this.logger.error(
+        `Material creation rolled back for organization ${organizationId} by ${userEmail}: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       if (err?.code === 'ER_DUP_ENTRY') {
         throw new ConflictException('A material with this code already exists in your organization');
       }
@@ -866,6 +869,10 @@ export class MaterialService {
       return this.findOne(cloneId, organizationId);
     } catch (err) {
       await queryRunner.rollbackTransaction();
+      this.logger.error(
+        `Material clone of ${id} rolled back for organization ${organizationId} by ${userEmail}: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       if (err?.code === 'ER_DUP_ENTRY') {
         throw new ConflictException('A material with this code already exists in your organization');
       }
@@ -1006,24 +1013,32 @@ export class MaterialService {
     // rather than rejecting the whole request — see stripPoLockedFields().
     const skippedFields = this.stripPoLockedFields(material, dto);
 
-    await this.dataSource.transaction(async manager => {
-      // flattenDto strips the document sections, so the deprecated flat URL
-      // columns are never written directly from an update payload — they are
-      // re-derived from material_documents below.
-      const flat = this.flattenDto(dto);
-      Object.assign(material, { ...flat, updatedBy: userEmail });
-      await manager.save(Material, material);
+    try {
+      await this.dataSource.transaction(async manager => {
+        // flattenDto strips the document sections, so the deprecated flat URL
+        // columns are never written directly from an update payload — they are
+        // re-derived from material_documents below.
+        const flat = this.flattenDto(dto);
+        Object.assign(material, { ...flat, updatedBy: userEmail });
+        await manager.save(Material, material);
 
-      if (documentInputs.length) {
-        // Documents supplied on update are ADDED, not swapped in: each becomes
-        // a new row, superseding the current version of its type where that
-        // type holds only one. Nothing already filed is discarded.
-        for (const input of documentInputs) {
-          await this.appendDocumentRow(manager, input, material, userEmail);
+        if (documentInputs.length) {
+          // Documents supplied on update are ADDED, not swapped in: each becomes
+          // a new row, superseding the current version of its type where that
+          // type holds only one. Nothing already filed is discarded.
+          for (const input of documentInputs) {
+            await this.appendDocumentRow(manager, input, material, userEmail);
+          }
+          await this.syncLegacyDocumentColumns(manager, id, organizationId);
         }
-        await this.syncLegacyDocumentColumns(manager, id, organizationId);
-      }
-    });
+      });
+    } catch (err) {
+      this.logger.error(
+        `Material update rolled back for material ${id} in organization ${organizationId} by ${userEmail}: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+      throw err;
+    }
 
     if (skippedFields.length) {
       this.logger.log(
