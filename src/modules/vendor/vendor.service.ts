@@ -75,6 +75,13 @@ import { StatusChangeRequestStatus } from './enums/status-change-request-status.
 import { VendorCodeService } from './vendor-code.service';
 import { VendorUsageValidationService } from './vendor-usage-validation.service';
 import { MaterialCategory } from '../material-category/entities/material-category.entity';
+import {
+  vendorBlacklistApprovalTemplate, vendorBlacklistWithdrawnTemplate,
+  vendorBlacklistWithdrawnSubject, VendorBlacklistWithdrawnData,
+  vendorBlacklistApprovedTemplate, vendorBlacklistApprovedSubject, VendorBlacklistApprovedData,
+  vendorBlacklistRejectedTemplate, vendorBlacklistRejectedSubject, VendorBlacklistRejectedData,
+  vendorActivatedTemplate, vendorActivatedSubject, VendorActivatedData,
+} from '../../shared/email/templates/vendor-blacklist-approval-template';
 
 const ALLOWED_SORT_FIELDS = new Set([
   'code', 'vendorName', 'tradeName', 'vendorStatus', 'vendorTypeId',
@@ -93,6 +100,11 @@ const MAX_PARENT_DEPTH = 20;
 // Roles that may approve a vendor blacklist / un-blacklist request, and that
 // receive the notification email when no specific approver is nominated.
 const APPROVER_ROLES = ['Manager', 'OrganizationAdmin', 'SuperAdmin'];
+
+// cancelStatusChange() collects no reason of its own — withdrawing is a plain
+// "never mind", not a decision that needs justifying — so the notification
+// falls back to this fixed line rather than leaving the field blank.
+const DEFAULT_WITHDRAWAL_REASON = 'Withdrawn by the requester before a decision was recorded.';
 
 // Approval links stay valid for a week — long enough for a manager on leave,
 // short enough that a leaked mailbox is not indefinitely exploitable.
@@ -1681,13 +1693,74 @@ export class VendorService {
     // recorded IS the record of what happened, so no CLARIFICATION_REQUIRED
     // or REJECTED vendorStatus value is needed.
     if (dto.decision === EvaluationDecision.APPROVED) {
+      const previousStatus = vendor.vendorStatus;
       await this.enable(id, organizationId, userEmail, role);
+
+      const vendorType = await this.vendorTypeRepo.findOne({ where: { id: vendor.vendorTypeId } });
+      const notificationSent = await this.sendVendorActivatedEmail(
+        vendor, vendorType?.name ?? vendor.vendorTypeId, previousStatus, userEmail, now, dto.comments,
+      );
+      this.logger.log(
+        `Vendor ${vendor.code} activated after approval by ${userEmail}; creator and approver notified (delivered=${notificationSent})`,
+      );
     }
 
     this.logger.log(
       `Vendor ${vendor.code} ${dto.stage} evaluation recorded (${dto.decision}) by ${userEmail}`,
     );
     return evaluation as unknown as VendorEvaluationResponseDto;
+  }
+
+  // Notifies the vendor's creator (cc the approver) that the vendor has been
+  // approved and is now ACTIVE. Fired from addEvaluation() only when the
+  // decision is APPROVED — enable() itself stays generic and does not know
+  // about evaluation decisions, so the email is sent by the caller instead.
+  private async sendVendorActivatedEmail(
+    vendor: Vendor,
+    vendorTypeName: string,
+    previousStatus: string,
+    approvedBy: string,
+    approvedAt: Date,
+    comments?: string | null,
+  ): Promise<boolean> {
+    const creator = vendor.createdBy
+      ? await this.userRepository.findOne({ where: { email: vendor.createdBy } })
+      : null;
+    const createdByName = creator
+      ? [creator.first_name, creator.last_name].filter(Boolean).join(' ').trim() || creator.email
+      : vendor.createdBy;
+
+    const data: VendorActivatedData = {
+      vendorName: vendor.vendorName,
+      vendorCode: vendor.code,
+      vendorStatus: VendorStatus.ACTIVE,
+      previousStatus,
+      vendorType: vendorTypeName,
+      approvedBy,
+      approvedOn: approvedAt,
+      tradeName: vendor.tradeName ?? undefined,
+      primaryContactPerson: vendor.primaryContactPerson ?? undefined,
+      contactEmail: vendor.email ?? undefined,
+      createdBy: createdByName ?? undefined,
+      createdOn: vendor.createdAt,
+      decisionComments: comments ?? undefined,
+      audience: 'all',
+      vendorUrl: `${process.env.FRONTEND_URL}/vendors/${vendor.id}/view`,
+    };
+
+    try {
+      return await this.emailService.sendEmail({
+        to: vendor.createdBy,
+        cc: approvedBy,
+        subject: vendorActivatedSubject(data),
+        html: vendorActivatedTemplate(data),
+      });
+    } catch (err) {
+      this.logger.error(
+        `Vendor-activated email for vendor ${vendor.code} could not be sent: ${err instanceof Error ? err.message : 'unknown error'}`,
+      );
+      return false;
+    }
   }
 
   // ══ Update ════════════════════════════════════════════════════════════
@@ -2043,7 +2116,7 @@ export class VendorService {
     approvers: Array<{ email: string }>,
     token: string,
   ): Promise<boolean> {
-    const approvalLink =
+    const approvalUrl =
       `${process.env.FRONTEND_URL}/vendors/status-approval` +
       `?requestId=${request.id}&token=${token}`;
 
@@ -2051,19 +2124,31 @@ export class VendorService {
       // Never log the token or the composed link.
       return await this.emailService.sendEmail({
         to: approvers.map(a => a.email),
+        cc: 'gcpstudy0@gmail.com',
         subject:
           request.requestType === StatusChangeRequestType.BLACKLIST
             ? `Approval required: blacklist vendor ${vendor.code} — ${vendor.vendorName}`
             : `Approval required: remove blacklist for vendor ${vendor.code} — ${vendor.vendorName}`,
-        html: vendorStatusApprovalTemplate({
-          approvalLink,
+        // html1: vendorStatusApprovalTemplate({
+        //   approvalLink,
+        //   vendorCode:  vendor.code,
+        //   vendorName:  vendor.vendorName,
+        //   action:      request.requestType === StatusChangeRequestType.BLACKLIST ? 'BLACKLIST' : 'UNBLACKLIST',
+        //   reason:      request.reason,
+        //   requestedBy: request.requestedBy,
+        //   requestedAt: request.requestedAt,
+        //   expiresAt:   request.tokenExpiresAt,
+        // }),
+        html: vendorBlacklistApprovalTemplate({
+          approvalUrl,
           vendorCode:  vendor.code,
           vendorName:  vendor.vendorName,
-          action:      request.requestType === StatusChangeRequestType.BLACKLIST ? 'BLACKLIST' : 'UNBLACKLIST',
+          requestedAction:      request.requestType === StatusChangeRequestType.BLACKLIST ? 'BLACKLIST' : 'UNBLACKLIST',
           reason:      request.reason,
           requestedBy: request.requestedBy,
-          requestedAt: request.requestedAt,
-          expiresAt:   request.tokenExpiresAt,
+          requestedOn: request.requestedAt,
+          expiresOn:   request.tokenExpiresAt,
+          token: token,
         }),
       });
     } catch (err) {
@@ -2071,6 +2156,139 @@ export class VendorService {
       // still act from the pending-requests screen.
       this.logger.error(
         `Approval email for vendor ${vendor.code} could not be sent: ${err instanceof Error ? err.message : 'unknown error'}`,
+      );
+      return false;
+    }
+  }
+
+
+  // Notifies the same approvers who were emailed the original approval
+  // request that the requester has withdrawn it — no decision is needed from
+  // them any more. `request` is the CURRENT row, re-read after
+  // cancelStatusChange() has already set it to CANCELLED (so decidedBy/
+  // decidedAt reflect who withdrew it and when); `originalRequest` is the row
+  // exactly as it was loaded before that update, so its reason/requestedBy/
+  // requestedAt describe the blacklist (or un-blacklist) request being pulled
+  // back, not the withdrawal itself. A bare GET-to-approve URL is deliberately
+  // avoided elsewhere in this flow for the same crawler-safety reason noted on
+  // sendApprovalEmail(); this email carries no token at all, since it asks for
+  // no decision.
+  private async sendWithdrawalEmail(
+    request: VendorStatusChangeRequest,
+    originalRequest: VendorStatusChangeRequest,
+    vendor: Vendor,
+    approvers: Array<{ email: string }>,
+  ): Promise<boolean> {
+    const data: VendorBlacklistWithdrawnData = {
+      requestId:   originalRequest.id,
+      vendorCode:  vendor.code,
+      vendorName:  vendor.vendorName,
+      requestedAction: originalRequest.requestType === StatusChangeRequestType.BLACKLIST ? 'Blacklist' : 'Remove Blacklist',
+      // The original request being withdrawn — untouched by the cancellation.
+      originalReason: originalRequest.reason,
+      requestedBy:    originalRequest.requestedBy,
+      requestedOn:    originalRequest.requestedAt,
+      // The withdrawal act itself — the current, post-cancel state.
+      outcome: 'withdrawn',
+      withdrawalReason: DEFAULT_WITHDRAWAL_REASON,
+      withdrawnBy: request.decidedBy ?? originalRequest.requestedBy,
+      withdrawnOn: request.decidedAt ?? new Date(),
+      //requestUrl: `${process.env.FRONTEND_URL}/vendors/status-approval?requestId=${originalRequest.id}`,
+    };
+
+    try {
+      return await this.emailService.sendEmail({
+        to: approvers.map(a => a.email),
+        cc: 'gcpstudy0@gmail.com',
+        subject: vendorBlacklistWithdrawnSubject(data),
+        html: vendorBlacklistWithdrawnTemplate(data),
+      });
+    } catch (err) {
+      // A mail outage must not undo the cancellation itself — it has already
+      // been persisted by the time this runs.
+      this.logger.error(
+        `Withdrawal email for vendor ${vendor.code} could not be sent: ${err instanceof Error ? err.message : 'unknown error'}`,
+      );
+      return false;
+    }
+  }
+
+  // Notifies the requester (cc the approver) that their request has been
+  // approved and the decision applied to the vendor. `request` is the row as
+  // it was raised — approveStatusChange() already has everything it needs to
+  // hand over, since the decision itself hasn't touched requestedBy/reason.
+  private async sendApprovedEmail(
+    request: VendorStatusChangeRequest,
+    vendor: Vendor,
+    decidedBy: string,
+    decidedAt: Date,
+    comments?: string | null,
+  ): Promise<boolean> {
+    const data: VendorBlacklistApprovedData = {
+      vendorName:  vendor.vendorName,
+      vendorCode:  vendor.code,
+      requestType: request.requestType === StatusChangeRequestType.BLACKLIST ? 'Blacklist' : 'Remove Blacklist',
+      requestReason: request.reason,
+      requestAt:     request.requestedAt,
+      requestedBy:   request.requestedBy,
+      approvedBy: decidedBy,
+      approvedOn: decidedAt,
+      decisionComments: comments ?? undefined,
+      requestId:  request.id,
+      audience:   'all',
+      vendorUrl:  `${process.env.FRONTEND_URL}/vendors/${vendor.id}/view`,
+    };
+
+    try {
+      return await this.emailService.sendEmail({
+        to: request.requestedBy,
+        cc: decidedBy,
+        subject: vendorBlacklistApprovedSubject(data),
+        html: vendorBlacklistApprovedTemplate(data),
+      });
+    } catch (err) {
+      // A mail outage must not undo a decision that has already been persisted.
+      this.logger.error(
+        `Approved-decision email for vendor ${vendor.code} could not be sent: ${err instanceof Error ? err.message : 'unknown error'}`,
+      );
+      return false;
+    }
+  }
+
+  // Notifies the requester (cc the approver) that their request has been
+  // rejected, so they know what to fix before raising it again.
+  private async sendRejectedEmail(
+    request: VendorStatusChangeRequest,
+    vendor: Vendor,
+    decidedBy: string,
+    decidedAt: Date,
+    comments?: string | null,
+  ): Promise<boolean> {
+    const data: VendorBlacklistRejectedData = {
+      vendorName:  vendor.vendorName,
+      vendorCode:  vendor.code,
+      requestType: request.requestType === StatusChangeRequestType.BLACKLIST ? 'Blacklist' : 'Remove Blacklist',
+      requestReason: request.reason,
+      requestAt:     request.requestedAt,
+      requestedBy:   request.requestedBy,
+      rejectedBy: decidedBy,
+      rejectedOn: decidedAt,
+      decisionComments: comments ?? undefined,
+      requestId:  request.id,
+      audience:   'all',
+      actionUrl:  `${process.env.FRONTEND_URL}/vendors/${vendor.id}/view`,
+    };
+
+    try {
+      return await this.emailService.sendEmail({
+        to: request.requestedBy,
+        cc: decidedBy,
+        subject: vendorBlacklistRejectedSubject(data),
+        html: vendorBlacklistRejectedTemplate(data),
+      });
+    } catch (err) {
+      this.logger.error(
+        `Rejected-decision email for vendor ${vendor.code} could not be sent: ${err instanceof Error ? err.message : 'unknown error'}`,
       );
       return false;
     }
@@ -2125,9 +2343,10 @@ export class VendorService {
       });
     });
 
+    const notificationSent = await this.sendApprovedEmail(request, vendor, userEmail, now, dto.comments);
     this.logger.warn(
       `Vendor ${vendor.code} ${request.requestType} request approved by ${userEmail} ` +
-      `(raised by ${request.requestedBy})`,
+      `(raised by ${request.requestedBy}); requester notified (delivered=${notificationSent})`,
     );
     return this.findOne(vendor.id, organizationId, userEmail, role);
   }
@@ -2166,7 +2385,11 @@ export class VendorService {
       });
     });
 
-    this.logger.log(`Vendor ${vendor.code} ${request.requestType} request rejected by ${userEmail}`);
+    const notificationSent = await this.sendRejectedEmail(request, vendor, userEmail, now, dto.comments);
+    this.logger.log(
+      `Vendor ${vendor.code} ${request.requestType} request rejected by ${userEmail}; ` +
+      `requester notified (delivered=${notificationSent})`,
+    );
     return this.findOne(vendor.id, organizationId, userEmail, role);
   }
 
@@ -2187,6 +2410,7 @@ export class VendorService {
     }
 
     const vendor = await this.findVendorOrThrow(request.vendorId, organizationId);
+    const now = new Date();
 
     await this.dataSource.transaction(async manager => {
       vendor.pendingStatusChange          = null;
@@ -2197,11 +2421,28 @@ export class VendorService {
       await manager.update(VendorStatusChangeRequest, { id: request.id }, {
         status:        StatusChangeRequestStatus.CANCELLED,
         decidedBy:     userEmail,
-        decidedAt:     new Date(),
+        decidedAt:     now,
         approvalToken: null,
         updatedBy:     userEmail,
       });
     });
+
+    // `request` is the row exactly as raised — the ORIGINAL blacklist/
+    // un-blacklist request being pulled back. The email needs both that and
+    // the just-applied cancellation, so the current state is applied onto a
+    // copy rather than re-reading the row back from the database.
+    const cancelledRequest: VendorStatusChangeRequest = {
+      ...request,
+      status:    StatusChangeRequestStatus.CANCELLED,
+      decidedBy: userEmail,
+      decidedAt: now,
+    };
+    const approvers = await this.resolveApprovers(organizationId, request.approverUserId);
+    const notificationSent = await this.sendWithdrawalEmail(cancelledRequest, request, vendor, approvers);
+    this.logger.log(
+      `Vendor ${vendor.code} ${request.requestType} request withdrawn by ${userEmail}; ` +
+      `${approvers.length} approver(s) notified (delivered=${notificationSent})`,
+    );
 
     return this.findOne(vendor.id, organizationId, userEmail, role);
   }

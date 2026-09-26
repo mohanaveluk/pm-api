@@ -146,12 +146,18 @@ describe('Server-generated codes: Department, Discipline, Activity', () => {
   // ── Discipline ───────────────────────────────────────────────────
 
   describe('DisciplineService.create', () => {
+    // A Discipline belongs to exactly one active Department (organization
+    // policy) — create() validates dto.departmentId against this repo before
+    // ever touching the code sequence.
+    const activeDepartment = { id: DEPT_ID, organizationId: ORG_A, isActive: true, isDeleted: false };
+
     const build = async (lastSequence = 0) => {
       const harness = buildHarness(lastSequence);
       const module: TestingModule = await Test.createTestingModule({
         providers: [
           DisciplineService, MasterCodeService,
           { provide: getRepositoryToken(Discipline),        useValue: makeRepo() },
+          { provide: getRepositoryToken(Department),        useValue: makeRepo({ findOne: jest.fn(async () => activeDepartment) }) },
           { provide: getRepositoryToken(MasterCodeCounter), useValue: makeRepo() },
           { provide: DataSource, useValue: harness.dataSource },
         ],
@@ -161,19 +167,19 @@ describe('Server-generated codes: Department, Discipline, Activity', () => {
 
     it('generates 0001 for the first discipline', async () => {
       const { service, harness } = await build(0);
-      await service.create(ORG_A, { name: 'Piping' } as CreateDisciplineDto, USER);
+      await service.create(ORG_A, { name: 'Piping', departmentId: DEPT_ID } as CreateDisciplineDto, USER);
       expect(harness.saved[0].code).toBe('0001');
     });
 
     it('continues the organization sequence', async () => {
       const { service, harness } = await build(4);
-      await service.create(ORG_A, { name: 'Welding' } as CreateDisciplineDto, USER);
+      await service.create(ORG_A, { name: 'Welding', departmentId: DEPT_ID } as CreateDisciplineDto, USER);
       expect(harness.saved[0].code).toBe('0005');
     });
 
     it('uses the DISCIPLINE sequence key — independent of DEPARTMENT', async () => {
       const { service, harness } = await build(0);
-      await service.create(ORG_A, { name: 'Piping' } as CreateDisciplineDto, USER);
+      await service.create(ORG_A, { name: 'Piping', departmentId: DEPT_ID } as CreateDisciplineDto, USER);
       expect(harness.queryRunner.manager.findOne).toHaveBeenCalledWith(
         MasterCodeCounter,
         expect.objectContaining({

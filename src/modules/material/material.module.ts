@@ -11,6 +11,7 @@ import { UnitOfMeasurement }   from '../unit-of-measurement/entities/unit-of-mea
 import { MaterialController }            from './material.controller';
 import { MaterialService }               from './material.service';
 import { MaterialCodeService }           from './material-code.service';
+import { MaterialImportService }         from './material-import.service';
 import { MaterialUsageValidationService } from './material-usage-validation.service';
 import { User } from '../user/entity/user.entity';
 import { CloudStorageService } from 'src/common/services/cloud-storage.service';
@@ -28,7 +29,7 @@ import { CloudStorageService } from 'src/common/services/cloud-storage.service';
     ]),
   ],
   controllers: [MaterialController],
-  providers:   [MaterialService, MaterialCodeService, MaterialUsageValidationService, CloudStorageService],
+  providers:   [MaterialService, MaterialCodeService, MaterialImportService, MaterialUsageValidationService, CloudStorageService],
   exports:     [MaterialService, MaterialUsageValidationService],
 })
 export class MaterialModule {}

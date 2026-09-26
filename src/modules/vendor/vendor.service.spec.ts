@@ -601,6 +601,47 @@ describe('VendorService', () => {
         service.addEvaluation(VENDOR_ID, ORG_B, evaluationDto(), USER, 'Manager'),
       ).rejects.toThrow(NotFoundException);
     });
+
+    it('notifies the vendor creator (cc the approver) once APPROVED activates the vendor', async () => {
+      vendorRepo.findOne.mockResolvedValue(
+        existingVendor({ vendorStatus: VendorStatus.UNDER_EVALUATION, isActive: false, createdBy: 'someone.else@example.com' }),
+      );
+
+      await service.addEvaluation(
+        VENDOR_ID, ORG_A,
+        evaluationDto({ stage: EvaluationStage.FINAL, decision: EvaluationDecision.APPROVED, comments: 'Meets all criteria.' }),
+        USER, 'Manager',
+      );
+
+      expect(emailService.sendEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ to: 'someone.else@example.com', cc: USER }),
+      );
+      const html = emailService.sendEmail.mock.calls[0][0].html;
+      expect(html).toContain('Meets all criteria.');
+    });
+
+    it('does not send an activation email for decisions that do not activate the vendor', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor({ vendorStatus: VendorStatus.UNDER_EVALUATION }));
+
+      await service.addEvaluation(VENDOR_ID, ORG_A, evaluationDto(), USER, 'Manager');
+
+      expect(emailService.sendEmail).not.toHaveBeenCalled();
+    });
+
+    it('does not fail the evaluation when the activation email cannot be sent', async () => {
+      vendorRepo.findOne.mockResolvedValue(
+        existingVendor({ vendorStatus: VendorStatus.UNDER_EVALUATION, isActive: false }),
+      );
+      emailService.sendEmail.mockRejectedValueOnce(new Error('SMTP down'));
+
+      await expect(
+        service.addEvaluation(
+          VENDOR_ID, ORG_A,
+          evaluationDto({ stage: EvaluationStage.FINAL, decision: EvaluationDecision.APPROVED }),
+          USER, 'Manager',
+        ),
+      ).resolves.toBeDefined();
+    });
   });
 
   // ══ Documents (dedicated sub-resource) ════════════════════════════════
@@ -1278,6 +1319,37 @@ describe('VendorService', () => {
       expect(vendor.pendingStatusChange).toBeNull();
     });
 
+    it('notifies the requester (cc the approver) when a request is approved', async () => {
+      const vendor = existingVendor({ pendingStatusChange: PendingStatusChange.PENDING_BLACKLIST });
+      const req = pendingRequest({ reason: 'Quality non-conformance', requestedBy: USER });
+      statusRequestRepo.createQueryBuilder.mockReturnValue(makeQb({ getOne: jest.fn(async () => req) }));
+      vendorRepo.findOne.mockResolvedValue(vendor);
+
+      await service.approveStatusChange(
+        REQUEST_ID, ORG_A, { token: req.approvalToken, comments: 'Confirmed with the client' }, MANAGER, 'Manager',
+      );
+
+      expect(emailService.sendEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ to: USER, cc: MANAGER }),
+      );
+      const html = emailService.sendEmail.mock.calls[0][0].html;
+      expect(html).toContain('Quality non-conformance');
+      expect(html).toContain('Confirmed with the client');
+    });
+
+    it('does not fail approval when the decision email cannot be sent', async () => {
+      const vendor = existingVendor({ pendingStatusChange: PendingStatusChange.PENDING_BLACKLIST });
+      const req = pendingRequest();
+      statusRequestRepo.createQueryBuilder.mockReturnValue(makeQb({ getOne: jest.fn(async () => req) }));
+      vendorRepo.findOne.mockResolvedValue(vendor);
+      emailService.sendEmail.mockRejectedValueOnce(new Error('SMTP unreachable'));
+
+      await expect(
+        service.approveStatusChange(REQUEST_ID, ORG_A, { token: req.approvalToken }, MANAGER, 'Manager'),
+      ).resolves.toBeDefined();
+      expect(vendor.vendorStatus).toBe(VendorStatus.BLACKLISTED);
+    });
+
     it('returns the vendor to UNDER_EVALUATION when an un-blacklist is approved', async () => {
       const vendor = existingVendor({
         vendorStatus: VendorStatus.BLACKLISTED,
@@ -1369,6 +1441,37 @@ describe('VendorService', () => {
       expect(vendor.pendingStatusChange).toBeNull();
     });
 
+    it('notifies the requester (cc the rejecter) when a request is rejected, with the rejection reason', async () => {
+      const vendor = existingVendor({ pendingStatusChange: PendingStatusChange.PENDING_BLACKLIST });
+      const req = pendingRequest({ reason: 'Quality non-conformance', requestedBy: USER });
+      statusRequestRepo.createQueryBuilder.mockReturnValue(makeQb({ getOne: jest.fn(async () => req) }));
+      vendorRepo.findOne.mockResolvedValue(vendor);
+
+      await service.rejectStatusChange(
+        REQUEST_ID, ORG_A, { token: req.approvalToken, comments: 'Insufficient evidence' }, MANAGER, 'Manager',
+      );
+
+      expect(emailService.sendEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ to: USER, cc: MANAGER }),
+      );
+      const html = emailService.sendEmail.mock.calls[0][0].html;
+      expect(html).toContain('Quality non-conformance');
+      expect(html).toContain('Insufficient evidence');
+    });
+
+    it('does not fail rejection when the decision email cannot be sent', async () => {
+      const vendor = existingVendor({ pendingStatusChange: PendingStatusChange.PENDING_BLACKLIST });
+      const req = pendingRequest();
+      statusRequestRepo.createQueryBuilder.mockReturnValue(makeQb({ getOne: jest.fn(async () => req) }));
+      vendorRepo.findOne.mockResolvedValue(vendor);
+      emailService.sendEmail.mockRejectedValueOnce(new Error('SMTP unreachable'));
+
+      await expect(
+        service.rejectStatusChange(REQUEST_ID, ORG_A, { token: req.approvalToken }, MANAGER, 'Manager'),
+      ).resolves.toBeDefined();
+      expect(vendor.pendingStatusChange).toBeNull();
+    });
+
     // ── Cancelling ───────────────────────────────────────────────────
 
     it('lets the requester withdraw their own request', async () => {
@@ -1386,6 +1489,37 @@ describe('VendorService', () => {
       await expect(
         service.cancelStatusChange(REQUEST_ID, ORG_A, MANAGER, 'Manager'),
       ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('notifies the original approvers of the withdrawal, carrying the original reason and requester', async () => {
+      const vendor = existingVendor({ pendingStatusChange: PendingStatusChange.PENDING_BLACKLIST });
+      statusRequestRepo.findOne.mockResolvedValue(
+        pendingRequest({ reason: 'Quality non-conformance', requestedBy: USER }),
+      );
+      vendorRepo.findOne.mockResolvedValue(vendor);
+
+      await service.cancelStatusChange(REQUEST_ID, ORG_A, USER, 'Manager');
+
+      expect(emailService.sendEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: expect.arrayContaining(managers.map(m => m.email)),
+        }),
+      );
+      const call = emailService.sendEmail.mock.calls[0][0];
+      // The original request's own reason and requester survive into the
+      // withdrawal email — not overwritten by the cancellation itself.
+      expect(call.html).toContain('Quality non-conformance');
+      expect(call.html).toContain(USER);
+    });
+
+    it('does not fail the cancellation when the withdrawal email cannot be sent', async () => {
+      const vendor = existingVendor({ pendingStatusChange: PendingStatusChange.PENDING_BLACKLIST });
+      statusRequestRepo.findOne.mockResolvedValue(pendingRequest());
+      vendorRepo.findOne.mockResolvedValue(vendor);
+      emailService.sendEmail.mockRejectedValueOnce(new Error('SMTP unreachable'));
+
+      await expect(service.cancelStatusChange(REQUEST_ID, ORG_A, USER, 'Manager')).resolves.toBeDefined();
+      expect(vendor.pendingStatusChange).toBeNull();
     });
 
     // ── Expiry sweep ─────────────────────────────────────────────────

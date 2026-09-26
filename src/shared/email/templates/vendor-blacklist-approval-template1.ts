@@ -1,19 +1,19 @@
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- *  Verification email templates (self-contained)
+ *  Vendor blacklist approval email (self-contained)
  *
  *  Exports:
- *    - verifyEmailTemplate(code, userId, firstName, domain)
- *    - VerifyOrganizationRegistration(code, oguid, orgName, domain)
+ *    - vendorBlacklistApprovalSubject(data)  → subject line (plain text)
+ *    - vendorBlacklistApprovalTemplate(data) → full HTML email
  *
- *  Everything lives in this file:
+ *  Same structure and look as verify-email-template.ts:
  *    1. PALETTE: copy of the website SCSS palette (primary / secondary)
  *    2. THEME: semantic roles (colours, fonts, sizes) built from the palette
  *    3. STYLES: named inline-style objects built from THEME
  *    4. Components: small HTML builders that use STYLES
- *    5. Templates: content only, with no raw colours or fonts
+ *    5. Template: content only, with no raw colours or fonts
  *
- *  To re-theme, change PALETTE (or THEME). No markup needs touching.
+ *  Keep sections 1–2 identical across email files so every email matches.
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
@@ -30,12 +30,18 @@ const PALETTE = {
     40: '#475f84', 50: '#60789e', 60: '#7992b9', 70: '#94acd5', 80: '#afc8f1', 90: '#d4e3ff',
     95: '#ebf1ff', 98: '#f9f9ff', 99: '#fdfcff', 100: '#ffffff',
   },
+  /**
+   * Status tones (Material 3 baseline "error" palette, the same system the
+   * website palette uses). Replace with the website's error palette if you add one.
+   */
+  error: { 20: '#690005', 40: '#ba1a1a', 80: '#ffb4ab', 95: '#ffedea' },
 } as const;
 
 /* ───────────────────────── 2. THEME ───────────────────────── */
 
 const p = PALETTE.primary;
 const s = PALETTE.secondary;
+const e = PALETTE.error;
 
 /** '#005faf', 0.4 → 'rgba(0,95,175,0.4)' */
 function alpha(hex: string, a: number): string {
@@ -45,9 +51,8 @@ function alpha(hex: string, a: number): string {
 
 const THEME = {
   brandName: 'Project Management',
-  supportMailbox: 'support',
-  mailIcon: 'https://img.icons8.com/ios-filled/50/ffffff/message-link.png',
-  expiryMinutes: 30,
+  /** White 50px PNG shown in the hero. Hosted PNGs render in every client. */
+  heroIcon: 'https://img.icons8.com/ios-filled/50/ffffff/approval.png',
 
   color: {
     primary: p[40], // website --primary (.submit-btn)
@@ -57,6 +62,9 @@ const THEME = {
     onPrimary: p[100],
     secondary: s[40],
     secondarySurface: s[95],
+
+    danger: e[40],
+    dangerSurface: e[95],
 
     pageBg: p[95],
     surface: p[100],
@@ -83,6 +91,8 @@ const THEME = {
     text: s[90],
     textMuted: s[80],
     link: p[80],
+    danger: e[80],
+    dangerSurface: e[20],
   },
 
   /** Mirrors website .login-page__left */
@@ -91,10 +101,11 @@ const THEME = {
 
   font: {
     family: `'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif`,
+    mono: `'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace`,
     outlook: `'Segoe UI',Arial,sans-serif`,
   },
 
-  radius: { sm: 8, md: 10, lg: 20, icon: 16 }, // sm = website --r-sm
+  radius: { sm: 8, md: 10, lg: 20, icon: 16, pill: 999 }, // sm = website --r-sm
   size: { container: 600, buttonHeight: 50, buttonMinWidth: 260, icon: 40 },
   shadow: {
     card: `0 8px 32px ${alpha(p[30], 0.12)}`,
@@ -125,6 +136,7 @@ function css(...styles: Style[]): string {
 const font: Style = { fontFamily: THEME.font.family, margin: 0, padding: 0 };
 
 const STYLES = {
+  /* Shell (same as verify email) */
   body: { ...font, width: '100%', backgroundColor: c.pageBg },
   wrapper: { backgroundColor: c.pageBg },
   wrapperCell: { padding: '40px 16px' },
@@ -151,11 +163,71 @@ const STYLES = {
   /* Body */
   content: { padding: '44px 40px 36px' },
   paragraph: { ...font, margin: '0 0 12px', fontSize: 15, lineHeight: 1.7, color: c.text },
-  accent: { color: c.primary, fontWeight: 700 },
   strong: { fontWeight: 700 },
+  accent: { color: c.primary, fontWeight: 700 },
+  sectionTitle: {
+    ...font,
+    margin: '0 0 10px',
+    fontSize: 11,
+    lineHeight: 1.4,
+    fontWeight: 700,
+    letterSpacing: '0.8px',
+    textTransform: 'uppercase',
+    color: c.textSubtle,
+  },
+
+  /* Details (key / value) card */
+  detailsRow: { paddingTop: 28 },
+  details: {
+    backgroundColor: c.surfaceAlt,
+    border: `1px solid ${c.primaryBorder}`,
+    borderRadius: THEME.radius.md,
+    padding: '6px 18px',
+  },
+  kvLabel: {
+    ...font,
+    width: '38%',
+    padding: '12px 12px 12px 0',
+    verticalAlign: 'top',
+    fontSize: 13,
+    lineHeight: 1.5,
+    fontWeight: 600,
+    color: c.textMuted,
+  },
+  kvValue: {
+    ...font,
+    padding: '12px 0',
+    verticalAlign: 'top',
+    fontSize: 14,
+    lineHeight: 1.5,
+    fontWeight: 600,
+    color: c.heading,
+    wordBreak: 'break-word',
+  },
+  kvDivider: { borderTop: `1px solid ${c.border}` },
+  mono: { fontFamily: THEME.font.mono, fontSize: 12, fontWeight: 400, wordBreak: 'break-all' },
+  tokenLink: { color: c.link, textDecoration: 'none' },
+  badgeDanger: {
+    display: 'inline-block',
+    padding: '3px 10px',
+    fontSize: 11,
+    lineHeight: 1.4,
+    fontWeight: 700,
+    letterSpacing: '0.6px',
+    textTransform: 'uppercase',
+    color: c.danger,
+    backgroundColor: c.dangerSurface,
+    borderRadius: THEME.radius.pill,
+  },
+
+  /* Impact list */
+  impactRow: { paddingTop: 28 },
+  impactIcon: { ...font, width: 22, padding: '3px 0', verticalAlign: 'top', fontSize: 13, lineHeight: 1.6, fontWeight: 700, color: c.danger },
+  impactText: { ...font, padding: '3px 0', verticalAlign: 'top', fontSize: 14, lineHeight: 1.6, color: c.text },
+  impactNote: { ...font, margin: '10px 0 0', fontSize: 13, lineHeight: 1.6, color: c.textMuted },
 
   /* Button (mirrors .submit-btn) */
-  buttonRow: { padding: '32px 0' },
+  buttonRow: { padding: '32px 0 0' },
   button: {
     ...font,
     display: 'inline-block',
@@ -173,27 +245,12 @@ const STYLES = {
     boxShadow: THEME.shadow.button,
   },
 
-  /* Divider */
-  dividerRow: { padding: '0 0 32px' },
-  dividerLine: { borderTop: `1px solid ${c.border}`, height: 1, fontSize: 1, lineHeight: '1px' },
-  dividerLabel: {
-    ...font,
-    padding: '0 14px',
-    whiteSpace: 'nowrap',
-    fontSize: 11,
-    fontWeight: 600,
-    letterSpacing: '1px',
-    textTransform: 'uppercase',
-    color: c.textSubtle,
-  },
-
-  /* Link box */
-  linkBox: {
-    backgroundColor: c.surfaceAlt,
-    border: `1px solid ${c.primaryBorder}`,
-    borderRadius: THEME.radius.md,
-    padding: '14px 18px',
-  },
+  /* Info pills */
+  pillsRow: { paddingTop: 32 },
+  pillCellLeft: { paddingRight: 8, verticalAlign: 'top' },
+  pillCellRight: { paddingLeft: 8, verticalAlign: 'top' },
+  pillPrimary: { backgroundColor: c.primarySurface, borderRadius: THEME.radius.md, padding: '14px 16px' },
+  pillSecondary: { backgroundColor: c.secondarySurface, borderRadius: THEME.radius.md, padding: '14px 16px' },
   label: {
     ...font,
     margin: '0 0 4px',
@@ -204,23 +261,22 @@ const STYLES = {
     textTransform: 'uppercase',
     color: c.textSubtle,
   },
-  linkUrl: { fontFamily: THEME.font.family, fontSize: 12, lineHeight: 1.5, color: c.link, wordBreak: 'break-all', textDecoration: 'none' },
-
-  /* Info pills */
-  pillsRow: { paddingTop: 32 },
-  pillCellLeft: { paddingRight: 8, verticalAlign: 'top' },
-  pillCellRight: { paddingLeft: 8, verticalAlign: 'top' },
-  pillPrimary: { backgroundColor: c.primarySurface, borderRadius: THEME.radius.md, padding: '14px 16px' },
-  pillSecondary: { backgroundColor: c.secondarySurface, borderRadius: THEME.radius.md, padding: '14px 16px' },
   pillLabelPrimary: { color: c.primary, fontWeight: 700 },
   pillLabelSecondary: { color: c.secondary, fontWeight: 700 },
   pillValue: { ...font, fontSize: 14, lineHeight: 1.4, fontWeight: 600, color: c.heading },
 
-  /* Callout */
-  calloutRow: { paddingTop: 28 },
-  callout: {
+  /* Callouts */
+  calloutRow: { paddingTop: 20 },
+  calloutFirstRow: { paddingTop: 28 },
+  calloutInfo: {
     backgroundColor: c.primarySurface,
     borderLeft: `4px solid ${c.primary}`,
+    borderRadius: 6,
+    padding: '14px 18px',
+  },
+  calloutDanger: {
+    backgroundColor: c.dangerSurface,
+    borderLeft: `4px solid ${c.danger}`,
     borderRadius: 6,
     padding: '14px 18px',
   },
@@ -262,6 +318,8 @@ function headStyles(): string {
       .em-h1 { font-size: 22px !important; }
       .em-btn { display: block !important; min-width: 0 !important; }
       .em-stack { display: block !important; width: 100% !important; padding: 0 0 12px 0 !important; }
+      .em-kv-label { display: block !important; width: 100% !important; padding: 12px 0 2px 0 !important; }
+      .em-kv-value { display: block !important; width: 100% !important; padding: 0 0 12px 0 !important; border-top: 0 !important; }
     }
 
     @media (prefers-color-scheme: dark) {
@@ -273,14 +331,18 @@ function headStyles(): string {
       .em-muted { color: ${d.textMuted} !important; }
       .em-link { color: ${d.link} !important; }
       .em-line { border-color: ${d.border} !important; }
+      .em-danger { color: ${d.danger} !important; }
+      .em-danger-surface { background-color: ${d.dangerSurface} !important; }
     }
     [data-ogsc] .em-heading { color: ${d.heading} !important; }
     [data-ogsc] .em-text { color: ${d.text} !important; }
     [data-ogsc] .em-muted { color: ${d.textMuted} !important; }
     [data-ogsc] .em-link { color: ${d.link} !important; }
+    [data-ogsc] .em-danger { color: ${d.danger} !important; }
     [data-ogsb] .em-page { background-color: ${d.pageBg} !important; }
     [data-ogsb] .em-card { background-color: ${d.surface} !important; }
     [data-ogsb] .em-surface { background-color: ${d.surfaceAlt} !important; }
+    [data-ogsb] .em-danger-surface { background-color: ${d.dangerSurface} !important; }
   `.replace(/\n\s+/g, '\n').trim();
 }
 
@@ -291,13 +353,12 @@ const T = 'role="presentation" width="100%" cellpadding="0" cellspacing="0" bord
 const escapeHtml = (v: unknown): string =>
   String(v ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch] as string);
 
-/** 'https://app.example.com/x' → 'app.example.com' */
-function hostOf(domain: string): string {
-  try {
-    return new URL(/^https?:\/\//i.test(domain) ? domain : `https://${domain}`).hostname;
-  } catch {
-    return domain.replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
-  }
+/** ISO date → "Sep 20, 2026, 4:00 AM UTC". Unparseable values are shown as given. */
+function formatDate(value: string | Date): string {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return escapeHtml(value);
+  const text = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }).format(d);
+  return `${escapeHtml(text)} UTC`;
 }
 
 function button(href: string, label: string): string {
@@ -315,23 +376,45 @@ function button(href: string, label: string): string {
 </td></tr></table>`;
 }
 
-function divider(label: string): string {
-  const line = `<div class="em-line" style="${st('dividerLine')}">&nbsp;</div>`;
+interface DetailRow {
+  label: string;
+  /** Trusted HTML; escape user values before passing them in. */
+  value: string;
+}
+
+function detailsCard(title: string, rows: DetailRow[]): string {
+  const body = rows
+    .map((r, i) => {
+      const line = i === 0 ? '' : st('kvDivider');
+      return `<tr>
+        <td class="em-kv-label em-muted em-line" style="${st('kvLabel')};${line}">${r.label}</td>
+        <td class="em-kv-value em-heading em-line" style="${st('kvValue')};${line}">${r.value}</td>
+      </tr>`;
+    })
+    .join('');
   return `
-<table ${T}><tr><td style="${st('dividerRow')}">
-  <table ${T}><tr>
-    <td width="50%" valign="middle">${line}</td>
-    <td valign="middle" class="em-muted" style="${st('dividerLabel')}">${label}</td>
-    <td width="50%" valign="middle">${line}</td>
-  </tr></table>
+<table ${T}><tr><td style="${st('detailsRow')}">
+  <p class="em-muted" style="${st('sectionTitle')}">${title}</p>
+  <table ${T}><tr><td class="em-surface" bgcolor="${c.surfaceAlt}" style="${st('details')}">
+    <table ${T}>${body}</table>
+  </td></tr></table>
 </td></tr></table>`;
 }
 
-function linkBox(label: string, href: string): string {
+function impactList(title: string, items: string[], note: string): string {
+  const rows = items
+    .map(
+      (item) => `<tr>
+        <td class="em-danger" width="22" style="${st('impactIcon')}">✕</td>
+        <td class="em-text" style="${st('impactText')}">${item}</td>
+      </tr>`,
+    )
+    .join('');
   return `
-<table ${T}><tr><td class="em-surface" bgcolor="${c.surfaceAlt}" style="${st('linkBox')}">
-  <p class="em-muted" style="${st('label')}">${label}</p>
-  <a class="em-link" href="${href}" style="${st('linkUrl')}">${href}</a>
+<table ${T}><tr><td style="${st('impactRow')}">
+  <p class="em-muted" style="${st('sectionTitle')}">${title}</p>
+  <table ${T}>${rows}</table>
+  <p class="em-muted" style="${st('impactNote')}">${note}</p>
 </td></tr></table>`;
 }
 
@@ -360,35 +443,52 @@ function infoPills(left: Pill, right: Pill): string {
 </td></tr></table>`;
 }
 
-function callout(title: string, body: string): string {
+function callout(tone: 'info' | 'danger', icon: string, title: string, body: string, first = false): string {
+  const box: StyleName = tone === 'info' ? 'calloutInfo' : 'calloutDanger';
+  const cls = tone === 'info' ? 'em-surface' : 'em-danger-surface';
+  const bg = tone === 'info' ? c.primarySurface : c.dangerSurface;
   return `
-<table ${T}><tr><td style="${st('calloutRow')}">
-  <table ${T}><tr><td class="em-surface" bgcolor="${c.primarySurface}" style="${st('callout')}">
-    <p class="em-text" style="${st('calloutText')}">🛡&nbsp;<strong style="${st('strong')}">${title}</strong> ${body}</p>
+<table ${T}><tr><td style="${st(first ? 'calloutFirstRow' : 'calloutRow')}">
+  <table ${T}><tr><td class="${cls}" bgcolor="${bg}" style="${st(box)}">
+    <p class="em-text" style="${st('calloutText')}">${icon}&nbsp;<strong style="${st('strong')}">${title}</strong> ${body}</p>
   </td></tr></table>
 </td></tr></table>`;
 }
 
-/* ───────────────────────── 5. Layout ───────────────────────── */
+/* ───────────────────────── 5. Template ───────────────────────── */
 
-interface VerificationContent {
-  url: string;
-  greetingName: string;
-  domain: string;
-  documentTitle: string;
-  heroTitle: string;
-  intro: string;
-  ignoreTitle: string;
-  ignoreBody: string;
+export interface VendorBlacklistApprovalData {
+  vendorCode: string;
+  vendorName: string;
+  /** Defaults to "Blacklist". */
+  requestedAction?: string;
+  reason: string;
+  requestedBy: string;
+  requestedOn: string | Date;
+  token: string;
+  /** Full review URL including requestId and token. */
+  approvalUrl: string;
+  expiresOn: string | Date;
+  /** Optional; adds a "contact support" link to the footer. */
+  supportEmail?: string;
 }
 
-function renderVerification(v: VerificationContent): string {
-  const url = escapeHtml(v.url);
+/** Plain-text subject line (do not HTML-escape). */
+export const vendorBlacklistApprovalSubject = (d: VendorBlacklistApprovalData): string =>
+  `Approval required: blacklist vendor ${d.vendorCode} — ${d.vendorName}`;
+
+export const vendorBlacklistApprovalTemplate = (d: VendorBlacklistApprovalData): string => {
+  const url = escapeHtml(d.approvalUrl);
   const brand = escapeHtml(THEME.brandName);
-  const mins = THEME.expiryMinutes;
-  const support = `${THEME.supportMailbox}@${hostOf(v.domain)}`;
   const year = new Date().getFullYear();
-  const preheader = `Confirm your email to finish setting up ${brand}. This link expires in ${mins} minutes.`;
+  const expires = formatDate(d.expiresOn);
+  const vendor = `${escapeHtml(d.vendorCode)} — ${escapeHtml(d.vendorName)}`;
+  const reason = escapeHtml(d.reason || '—').replace(/\r?\n/g, '<br />');
+  const action = escapeHtml(d.requestedAction || 'Blacklist');
+  const preheader = `Your approval is needed to blacklist ${vendor}. The link expires ${expires}.`;
+  const support = d.supportEmail
+    ? ` Questions? Contact <a class="em-link" href="mailto:${escapeHtml(d.supportEmail)}" style="${st('footerLink')}">${escapeHtml(d.supportEmail)}</a>.`
+    : '';
 
   return `<!DOCTYPE html>
 <html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
@@ -400,7 +500,7 @@ function renderVerification(v: VerificationContent): string {
   <meta name="format-detection" content="telephone=no, date=no, address=no, email=no, url=no" />
   <meta name="color-scheme" content="light dark" />
   <meta name="supported-color-schemes" content="light dark" />
-  <title>${escapeHtml(v.documentTitle)}</title>
+  <title>${escapeHtml(vendorBlacklistApprovalSubject(d))}</title>
   <!--[if mso]>
   <noscript><xml><o:OfficeDocumentSettings><o:AllowPNG/><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript>
   <style>body, table, td, a, p, h1 { font-family: ${THEME.font.outlook} !important; }</style>
@@ -427,31 +527,58 @@ ${headStyles()}
             <td class="em-hero" align="center" bgcolor="${THEME.heroFallback}" style="${st('hero')}">
               <table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto 20px;">
                 <tr><td style="${st('heroIconBox')}">
-                  <img src="${THEME.mailIcon}" alt="Mail icon" width="${THEME.size.icon}" height="${THEME.size.icon}" style="${st('heroIcon')}" />
+                  <img src="${THEME.heroIcon}" alt="Approval" width="${THEME.size.icon}" height="${THEME.size.icon}" style="${st('heroIcon')}" />
                 </td></tr>
               </table>
-              <h1 class="em-h1" style="${st('heroTitle')}">${escapeHtml(v.heroTitle)}</h1>
-              <p style="${st('heroSubtitle')}">One quick step and you're all set!</p>
+              <h1 class="em-h1" style="${st('heroTitle')}">Vendor Blacklist Approval Required</h1>
+              <p style="${st('heroSubtitle')}">A vendor status change is waiting for your decision.</p>
             </td>
           </tr>
 
           <!-- Body -->
           <tr>
             <td class="em-pad" style="${st('content')}">
-              <p class="em-text" style="${st('paragraph')}">Hi ${escapeHtml(v.greetingName)},</p>
               <p class="em-text" style="${css(STYLES.paragraph, { margin: 0 })}">
-                ${v.intro} To activate your account, click the button below. This link is valid for
-                <strong style="${st('strong')}">${mins}&nbsp;minutes</strong>.
+                A request has been raised to <strong style="${st('strong')}">blacklist</strong> the following vendor.
+                Please review the details below and record your decision.
               </p>
 
-              ${button(url, '✉&nbsp;&nbsp;Verify My Email')}
-              ${divider('Or use this link')}
-              ${linkBox('Verification link', url)}
-              ${infoPills(
-                { icon: '⏱', label: 'Expires in', value: `${mins} minutes`, tone: 'primary' },
-                { icon: '🔒', label: 'Single use', value: 'One-time link', tone: 'secondary' },
+              ${detailsCard('Request details', [
+                { label: 'Vendor Code', value: escapeHtml(d.vendorCode) },
+                { label: 'Vendor Name', value: escapeHtml(d.vendorName) },
+                { label: 'Requested Action', value: `<span class="em-danger em-danger-surface" style="${st('badgeDanger')}">${action}</span>` },
+                { label: 'Reason', value: reason },
+                { label: 'Requested By', value: `<a class="em-link" href="mailto:${escapeHtml(d.requestedBy)}" style="${st('tokenLink')}">${escapeHtml(d.requestedBy)}</a>` },
+                { label: 'Requested On', value: formatDate(d.requestedOn) },
+                { label: 'Token', value: `<a class="em-link" href="${url}" style="${css(STYLES.tokenLink, STYLES.mono)}">${escapeHtml(d.token)}</a>` },
+              ])}
+
+              ${impactList(
+                'Once approved, the vendor is excluded from',
+                ['Vendor selection', 'RFQs', 'The Approved Vendor List', 'New purchase orders'],
+                'Existing transactional history is retained.',
               )}
-              ${callout(v.ignoreTitle, v.ignoreBody)}
+
+              ${button(url, 'Review &amp; Approve')}
+
+              ${infoPills(
+                { icon: '⏳', label: 'Link expires', value: expires, tone: 'primary' },
+                { icon: '🔐', label: 'Sign-in required', value: 'Before any decision', tone: 'secondary' },
+              )}
+
+              ${callout(
+                'info',
+                'ℹ️',
+                'Opening this link does not approve anything on its own.',
+                'You will be asked to sign in before the decision is recorded, and you can also reject the request from the same screen.',
+                true,
+              )}
+              ${callout(
+                'danger',
+                '⚠️',
+                'Did not expect this request?',
+                'Do not action it. Contact your procurement administrator.',
+              )}
             </td>
           </tr>
 
@@ -459,9 +586,7 @@ ${headStyles()}
           <tr>
             <td class="em-pad em-surface" align="center" bgcolor="${c.surfaceAlt}" style="${st('footer')}">
               <p class="em-muted" style="${st('footerText')}">
-                This email was sent by <strong class="em-link" style="${st('accent')}">${brand}</strong>.
-                If you have questions, contact our
-                <a class="em-link" href="mailto:${support}" style="${st('footerLink')}">support team</a>.
+                This is an automated message from <strong class="em-link" style="${st('accent')}">${brand}</strong>.${support}
               </p>
               <p class="em-muted" style="${st('footerCopy')}">&copy; ${year} ${brand}. All rights reserved.</p>
             </td>
@@ -476,32 +601,4 @@ ${headStyles()}
   </table>
 </body>
 </html>`;
-}
-
-const accent = (value: string) => `<strong class="em-link" style="${st('accent')}">${escapeHtml(value)}</strong>`;
-
-/* ───────────────────────── 6. Templates ───────────────────────── */
-
-export const verifyEmailTemplate = (code: string, userId: string, firstName: string, domain: string): string =>
-  renderVerification({
-    url: `${domain}/auth/verifyemail/${encodeURIComponent(userId)}/${encodeURIComponent(code)}`,
-    greetingName: firstName || 'there',
-    domain,
-    documentTitle: `Verify your email – ${THEME.brandName}`,
-    heroTitle: 'Verify your email address',
-    intro: `Thanks for signing up for ${accent(THEME.brandName)}.`,
-    ignoreTitle: "Didn't create an account?",
-    ignoreBody: 'You can safely ignore this email. No account will be activated unless the link above is clicked.',
-  });
-
-export const VerifyOrganizationRegistration = (code: string, oguid: string, orgName: string, domain: string): string =>
-  renderVerification({
-    url: `${domain}/auth/verifyorg/${encodeURIComponent(oguid)}/${encodeURIComponent(code)}`,
-    greetingName: orgName || 'there',
-    domain,
-    documentTitle: `Verify your organization – ${THEME.brandName}`,
-    heroTitle: 'Verify your organization',
-    intro: `Thanks for registering your organization on ${accent(THEME.brandName)}.`,
-    ignoreTitle: "Didn't register an organization?",
-    ignoreBody: 'You can safely ignore this email. The organization will not be activated unless the link above is clicked.',
-  });
+};
