@@ -27,6 +27,9 @@ import { VendorUsageValidationService } from './vendor-usage-validation.service'
 import { CloudStorageService } from 'src/common/services/cloud-storage.service';
 import { EmailModule } from 'src/shared/email/email.module';
 import { MaterialCategory } from '../material-category/entities/material-category.entity';
+import { VendorImportService } from './vendor-import.service';
+import { MasterCodeCounter } from 'src/common/entities/master-code-counter.entity';
+import { MasterCodeService } from 'src/common/services/master-code.service';
 
 @Module({
   imports: [
@@ -51,10 +54,14 @@ import { MaterialCategory } from '../material-category/entities/material-categor
       MaterialCategory,
       Material,
       User,
+      MasterCodeCounter,
     ]),
   ],
   controllers: [VendorController],
-  providers:   [VendorService, VendorCodeService, VendorUsageValidationService, CloudStorageService],
+  providers:   [
+    VendorService, VendorCodeService, VendorUsageValidationService, CloudStorageService,
+    VendorImportService, MasterCodeService,
+  ],
   // VendorUsageValidationService is exported so downstream procurement modules
   // (RFQ, PO, Contract) can register their own dependency checks against it.
   exports:     [VendorService, VendorUsageValidationService, TypeOrmModule],

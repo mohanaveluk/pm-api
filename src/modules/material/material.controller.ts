@@ -15,6 +15,7 @@ import { Roles }        from 'src/common/decorators/roles.decorator';
 import { ResponseDto }  from 'src/common/dto/response.dto';
 
 import { MaterialService }      from './material.service';
+import { MaterialImportService, MATERIAL_IMPORT_MAX_BYTES } from './material-import.service';
 import { CreateMaterialDto }    from './dto/create-material.dto';
 import { UpdateMaterialDto }    from './dto/update-material.dto';
 import { MaterialQueryDto }     from './dto/material-query.dto';
@@ -32,7 +33,10 @@ import { FileInterceptor } from '@nestjs/platform-express';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('materials')
 export class MaterialController {
-  constructor(private readonly materialService: MaterialService) {}
+  constructor(
+    private readonly materialService: MaterialService,
+    private readonly materialImportService: MaterialImportService,
+  ) {}
 
   // ── Static routes first (must precede /:id) ───────────────────────────
 
@@ -302,5 +306,33 @@ export class MaterialController {
   ) {
     if (!file) throw new BadRequestException('No file provided');
     return this.materialService.uploadMaterialSpecificationDocument(req.user.userId, file);
-  }  
+  }
+
+  @Post('import')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Bulk import materials from an .xlsx, .csv or .json file (max 5 MB)',
+    description:
+      'Columns: Code (ignored - codes are generated), Short Description, Long Description, UOM, ' +
+      'Material Category, Material Group. Category, group and UOM are matched by name ' +
+      '(case-insensitive) and resolved to ids. A material whose Short Description already ' +
+      'exists is updated; otherwise a new one is created with a generated code. The whole ' +
+      'import is one transaction: any invalid row (422, with per-row errors) or failure ' +
+      'rolls everything back.',
+  })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({ schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } })
+  @ApiResponse({ status: 200, description: 'Import completed' })
+  @ApiResponse({ status: 400, description: 'Unreadable / unsupported / oversized file' })
+  @ApiResponse({ status: 422, description: 'Validation errors - nothing imported' })
+  @UseInterceptors(FileInterceptor('file', {
+    storage: memoryStorage(),
+    limits: { fileSize: MATERIAL_IMPORT_MAX_BYTES },
+  }))
+  async importMaterials(@Request() req: any, @UploadedFile() file: Express.Multer.File) {
+    if (!file) throw new BadRequestException('No file provided');
+    const data = await this.materialImportService.import(file, req.user.organizationId, req.user.email);
+    return ResponseDto.success(data);
+  }
 }

@@ -17,6 +17,7 @@ import { Roles }        from 'src/common/decorators/roles.decorator';
 import { ResponseDto }  from 'src/common/dto/response.dto';
 
 import { VendorService }   from './vendor.service';
+import { VendorImportService, VENDOR_IMPORT_MAX_BYTES } from './vendor-import.service';
 import { CreateVendorDto } from './dto/create-vendor.dto';
 import { UpdateVendorDto } from './dto/update-vendor.dto';
 import { CloneVendorDto }  from './dto/clone-vendor.dto';
@@ -64,7 +65,10 @@ import {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('vendors')
 export class VendorController {
-  constructor(private readonly vendorService: VendorService) {}
+  constructor(
+    private readonly vendorService: VendorService,
+    private readonly vendorImportService: VendorImportService,
+  ) {}
 
   // Shorthand for the ownership context every sub-resource read/write needs
   // to scope an external (is_internal=false) caller to their own vendors.
@@ -131,6 +135,36 @@ export class VendorController {
   async uploadDocument(@Request() req: any, @UploadedFile() file: Express.Multer.File) {
     if (!file) throw new BadRequestException('No file provided');
     return this.vendorService.uploadVendorDocument(req.user.userId, file);
+  }
+
+  @Post('import')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager', 'ProjectManager', 'WarehouseManager')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Bulk import vendors from an .xlsx, .csv or .json file (max 5 MB)',
+    description:
+      'Columns: Vendor Code (ignored - codes are generated), Vendor Name, Vendor Type, ' +
+      'Material Category, Contact details. Vendor Type and Material Category are matched by ' +
+      'name (case- and plural-insensitive). A blank Vendor Type defaults to "Supplier"; if the ' +
+      'resolved type does not exist yet it is created. A vendor is matched on Vendor Name + ' +
+      'Vendor Type + Material Category together — a match is updated (replaced), otherwise a ' +
+      'new vendor is created with a generated code. The whole import is one transaction, ' +
+      'including any Vendor Type it creates: any invalid row (422, with per-row errors) or ' +
+      'failure rolls everything back.',
+  })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({ schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } })
+  @ApiResponse({ status: 200, description: 'Import completed' })
+  @ApiResponse({ status: 400, description: 'Unreadable / unsupported / oversized file' })
+  @ApiResponse({ status: 422, description: 'Validation errors - nothing imported' })
+  @UseInterceptors(FileInterceptor('file', {
+    storage: memoryStorage(),
+    limits: { fileSize: VENDOR_IMPORT_MAX_BYTES },
+  }))
+  async importVendors(@Request() req: any, @UploadedFile() file: Express.Multer.File) {
+    if (!file) throw new BadRequestException('No file provided');
+    const data = await this.vendorImportService.import(file, req.user.organizationId, req.user.email);
+    return ResponseDto.success(data);
   }
 
   // ── Collection routes ─────────────────────────────────────────────────
