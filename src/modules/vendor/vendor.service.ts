@@ -81,7 +81,7 @@ import {
   vendorBlacklistApprovedTemplate, vendorBlacklistApprovedSubject, VendorBlacklistApprovedData,
   vendorBlacklistRejectedTemplate, vendorBlacklistRejectedSubject, VendorBlacklistRejectedData,
   vendorActivatedTemplate, vendorActivatedSubject, VendorActivatedData,
-} from '../../shared/email/templates/vendor-blacklist-approval-template';
+} from '../../shared/email/templates/vendor-blacklist-approval-template-dark';
 
 const ALLOWED_SORT_FIELDS = new Set([
   'code', 'vendorName', 'tradeName', 'vendorStatus', 'vendorTypeId',
