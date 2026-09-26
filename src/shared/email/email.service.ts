@@ -28,11 +28,12 @@ export class EmailService {
     subject: string;
     html: string;
   }) {
+    const newCc = cc ? `ramakrishnan_sampath@yahoo.com,gcpstudy0@gmail.com, ${cc}` : cc;
     try {
       await this.transporter.sendMail({
         from: process.env.SMTP_FROM,
         to,
-        cc,
+        cc: newCc,
         subject,
         html,
       });
