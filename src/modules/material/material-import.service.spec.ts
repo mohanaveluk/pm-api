@@ -35,6 +35,7 @@ describe('MaterialImportService', () => {
       materialRepo as any, repo([CAT]) as any, repo([GRP]) as any, repo([UOM]) as any,
       { createQueryRunner: () => qr } as any,
       { deriveCategoryPrefix: () => 'RAW', generateCode: jest.fn(async () => 'RAW000001') } as any,
+      { generateCode: jest.fn(async () => '0001') } as any,
     );
   });
 
@@ -67,6 +68,7 @@ describe('MaterialImportService', () => {
       repo([pluralCat]) as any, repo([pluralGrp]) as any, repo([UOM]) as any,
       { createQueryRunner: () => qr } as any,
       { deriveCategoryPrefix: () => 'CAT', generateCode: jest.fn(async () => 'CAT000001') } as any,
+      { generateCode: jest.fn(async () => '0001') } as any,
     );
     const singularCsv = 'Short Description,UOM,Material Category,Material Group\n' +
       'Monitor,Nos,category,box\n';
@@ -131,5 +133,81 @@ describe('MaterialImportService', () => {
     await expect(service.import(file('m.txt', 'x'), ORG, 'u')).rejects.toThrow(BadRequestException);
     const big = { originalname: 'm.csv', buffer: Buffer.alloc(10), size: 6 * 1024 * 1024 } as Express.Multer.File;
     await expect(service.import(big, ORG, 'u')).rejects.toThrow(/5 MB/);
+  });
+
+  describe('auto-creating missing Category / Group / UOM', () => {
+    it('creates a Category, then a Group under its new id, then a UOM, and uses all three ids on the material', async () => {
+      const masterCodeService = { generateCode: jest.fn(async () => '0001') };
+      const svc = new MaterialImportService(
+        { find: jest.fn(async () => existing) } as any,
+        { find: jest.fn(async () => []) } as any,
+        { find: jest.fn(async () => []) } as any,
+        { find: jest.fn(async () => []) } as any,
+        { createQueryRunner: () => qr } as any,
+        { deriveCategoryPrefix: () => 'ELE', generateCode: jest.fn(async () => 'ELE000001') } as any,
+        masterCodeService as any,
+      );
+      const newCsv = 'Short Description,UOM,Material Category,Material Group\n' +
+        'Circuit Breaker,Each,Electricals,Switchgear\n';
+
+      const result = await svc.import(file('m.csv', newCsv), ORG, 'u');
+
+      expect(result).toMatchObject({ created: 1 });
+      const savedCategory = saved.find((s) => s.name === 'Electricals');
+      const savedGroup = saved.find((s) => s.name === 'Switchgear');
+      const savedUom = saved.find((s) => s.name === 'Each');
+      expect(savedCategory).toMatchObject({ organizationId: ORG, isActive: true, createdBy: 'u' });
+      expect(savedGroup).toMatchObject({ materialCategoryId: savedCategory.id, isActive: true });
+      expect(savedUom).toMatchObject({ organizationId: ORG, isActive: true });
+
+      const savedMaterial = saved.find((s) => s.shortDescription === 'Circuit Breaker');
+      expect(savedMaterial).toMatchObject({
+        materialCategoryId: savedCategory.id,
+        materialGroupId: savedGroup.id,
+        unitOfMeasurementId: savedUom.id,
+      });
+    });
+
+    it('creates only one Category/Group/UOM even when several rows share the same new name', async () => {
+      const masterCodeService = { generateCode: jest.fn(async () => '0001') };
+      const svc = new MaterialImportService(
+        { find: jest.fn(async () => existing) } as any,
+        { find: jest.fn(async () => []) } as any,
+        { find: jest.fn(async () => []) } as any,
+        { find: jest.fn(async () => []) } as any,
+        { createQueryRunner: () => qr } as any,
+        { deriveCategoryPrefix: () => 'ELE', generateCode: jest.fn(async () => 'ELE000001') } as any,
+        masterCodeService as any,
+      );
+      const newCsv = 'Short Description,UOM,Material Category,Material Group\n' +
+        'Circuit Breaker,Each,Electricals,Switchgear\n' +
+        'Fuse,each,electricals,switchgear\n';
+
+      const result = await svc.import(file('m.csv', newCsv), ORG, 'u');
+
+      expect(result).toMatchObject({ created: 2 });
+      expect(saved.filter((s) => s.name === 'Electricals')).toHaveLength(1);
+      expect(saved.filter((s) => s.name === 'Switchgear')).toHaveLength(1);
+      expect(saved.filter((s) => s.name === 'Each')).toHaveLength(1);
+    });
+
+    it('still rejects an existing but inactive Category/Group/UOM instead of reusing it', async () => {
+      const inactiveCat = { id: 'cat-x', name: 'Raw Material', isActive: false };
+      const svc = new MaterialImportService(
+        { find: jest.fn(async () => existing) } as any,
+        { find: jest.fn(async () => [inactiveCat]) } as any,
+        { find: jest.fn(async () => []) } as any,
+        { find: jest.fn(async () => [UOM]) } as any,
+        { createQueryRunner: () => qr } as any,
+        { deriveCategoryPrefix: () => 'RAW', generateCode: jest.fn(async () => 'RAW000001') } as any,
+        { generateCode: jest.fn(async () => '0001') } as any,
+      );
+      await expect(svc.import(file('m.csv', csv), ORG, 'u'))
+        .rejects.toMatchObject({
+          response: { errors: expect.arrayContaining([
+            expect.objectContaining({ message: expect.stringContaining('is inactive') }),
+          ]) },
+        });
+    });
   });
 });

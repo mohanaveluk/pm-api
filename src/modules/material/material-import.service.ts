@@ -6,7 +6,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, QueryRunner, Repository } from 'typeorm';
 import { Readable } from 'stream';
 import { v4 as uuidv4 } from 'uuid';
 import * as ExcelJS from 'exceljs';
@@ -15,8 +15,10 @@ import { Material } from './entities/material.entity';
 import { MaterialCategory } from '../material-category/entities/material-category.entity';
 import { MaterialGroup } from '../material-group/entities/material-group.entity';
 import { UnitOfMeasurement } from '../unit-of-measurement/entities/unit-of-measurement.entity';
+import { UomType } from '../unit-of-measurement/enums/uom-type.enum';
 import { MaterialStatus } from './enums/material-status.enum';
 import { MaterialCodeService } from './material-code.service';
+import { MasterCodeService, MasterSequenceKey } from 'src/common/services/master-code.service';
 
 export const MATERIAL_IMPORT_MAX_BYTES = 5 * 1024 * 1024;
 const MAX_ROWS = 5000;
@@ -99,6 +101,7 @@ export class MaterialImportService {
     @InjectRepository(UnitOfMeasurement) private readonly uomRepo: Repository<UnitOfMeasurement>,
     private readonly dataSource: DataSource,
     private readonly codeService: MaterialCodeService,
+    private readonly masterCodeService: MasterCodeService,
   ) {}
 
   // Entry point: parse, validate everything, then write in ONE transaction.
@@ -126,14 +129,19 @@ export class MaterialImportService {
     await queryRunner.connect();
     await queryRunner.startTransaction();
     try {
+      // Any Category / Group / UOM the sheet referenced but that don't exist
+      // yet are created here, in the SAME transaction as the material writes
+      // below, so a failure anywhere rolls all of it back together.
+      await this.resolveMasterData(plan, organizationId, userEmail, queryRunner);
+
       const result: MaterialImportResult = { total: plan.length, created: 0, updated: 0, items: [] };
 
       for (const p of plan) {
         if (p.existing) {
           const m = p.existing;
-          m.materialCategoryId = p.categoryId;
-          m.materialGroupId = p.groupId;
-          m.unitOfMeasurementId = p.uomId;
+          m.materialCategoryId = p.categoryId!;
+          m.materialGroupId = p.groupId!;
+          m.unitOfMeasurementId = p.uomId!;
           // A purchase-order-locked material keeps the description the supplier priced.
           if (!m.isPurchaseOrderIssued) m.longDescription = p.longDescription || null;
           m.updatedBy = userEmail;
@@ -148,9 +156,9 @@ export class MaterialImportService {
             dguid: uuidv4(),
             organizationId,
             code,
-            materialCategoryId: p.categoryId,
-            materialGroupId: p.groupId,
-            unitOfMeasurementId: p.uomId,
+            materialCategoryId: p.categoryId!,
+            materialGroupId: p.groupId!,
+            unitOfMeasurementId: p.uomId!,
             shortDescription: p.name,
             longDescription: p.longDescription || null,
             status: MaterialStatus.ACTIVE,
@@ -179,6 +187,108 @@ export class MaterialImportService {
     }
   }
 
+  // ── Master data creation ─────────────────────────────────────────────
+
+  // Creates any Material Category, Material Group or UOM the sheet named but
+  // that didn't already exist, mutating each plan row's *Id field in place.
+  // Runs inside the caller's already-open transaction so a later failure
+  // (e.g. a duplicate material code) rolls the new master data back too.
+  //
+  // Order matters: Category is resolved (and created) first because Material
+  // Group is scoped to a Category and needs its materialCategoryId to be
+  // created or looked up. UOM has no such dependency.
+  private async resolveMasterData(
+    plan: Array<{
+      categoryId?: string; categoryName: string; categoryKey: string;
+      groupId?: string; groupName: string; groupKey: string;
+      uomId?: string; uomName: string; uomKey: string;
+    }>,
+    organizationId: string,
+    userEmail: string,
+    queryRunner: QueryRunner,
+  ): Promise<void> {
+    // ── Material Category ────────────────────────────────────────────
+    const categoryIdByKey = new Map<string, string>();
+    for (const p of plan) {
+      if (p.categoryId || categoryIdByKey.has(p.categoryKey)) continue;
+      const code = await this.masterCodeService.generateCode(
+        queryRunner, organizationId, MasterSequenceKey.MATERIAL_CATEGORY,
+      );
+      const category = queryRunner.manager.create(MaterialCategory, {
+        id: uuidv4(),
+        dguid: uuidv4(),
+        organizationId,
+        code,
+        name: p.categoryName,
+        isActive: true,
+        isSystem: false,
+        displayOrder: 0,
+        createdBy: userEmail,
+        updatedBy: userEmail,
+      });
+      await queryRunner.manager.save(MaterialCategory, category);
+      categoryIdByKey.set(p.categoryKey, category.id);
+    }
+    for (const p of plan) {
+      if (!p.categoryId) p.categoryId = categoryIdByKey.get(p.categoryKey);
+    }
+
+    // ── Material Group (needs the now-resolved Material Category id) ──
+    const groupIdByKey = new Map<string, string>();
+    for (const p of plan) {
+      if (p.groupId) continue;
+      const key = `${p.categoryId}::${p.groupKey}`;
+      if (groupIdByKey.has(key)) continue;
+      const code = await this.masterCodeService.generateCode(
+        queryRunner, organizationId, MasterSequenceKey.MATERIAL_GROUP,
+      );
+      const group = queryRunner.manager.create(MaterialGroup, {
+        id: uuidv4(),
+        dguid: uuidv4(),
+        organizationId,
+        materialCategoryId: p.categoryId,
+        code,
+        name: p.groupName,
+        isActive: true,
+        isSystem: false,
+        displayOrder: 0,
+        createdBy: userEmail,
+        updatedBy: userEmail,
+      });
+      await queryRunner.manager.save(MaterialGroup, group);
+      groupIdByKey.set(key, group.id);
+    }
+    for (const p of plan) {
+      if (!p.groupId) p.groupId = groupIdByKey.get(`${p.categoryId}::${p.groupKey}`);
+    }
+
+    // ── Unit of Measurement ─────────────────────────────────────────────
+    const uomIdByKey = new Map<string, string>();
+    for (const p of plan) {
+      if (p.uomId || uomIdByKey.has(p.uomKey)) continue;
+      const code = await this.masterCodeService.generateCode(
+        queryRunner, organizationId, MasterSequenceKey.UNIT_OF_MEASUREMENT,
+      );
+      const uom = queryRunner.manager.create(UnitOfMeasurement, {
+        id: uuidv4(),
+        dguid: uuidv4(),
+        organizationId,
+        code,
+        name: p.uomName,
+        uomType: UomType.OTHER,
+        isActive: true,
+        displayOrder: 0,
+        createdBy: userEmail,
+        updatedBy: userEmail,
+      });
+      await queryRunner.manager.save(UnitOfMeasurement, uom);
+      uomIdByKey.set(p.uomKey, uom.id);
+    }
+    for (const p of plan) {
+      if (!p.uomId) p.uomId = uomIdByKey.get(p.uomKey);
+    }
+  }
+
   // ── Validation & id resolution ───────────────────────────────────────
 
   private async validate(raw: RawImportRow[], organizationId: string) {
@@ -197,6 +307,12 @@ export class MaterialImportService {
       const key = canon(c.name);
       if (key && !categoryByName.has(key)) categoryByName.set(key, c);
     }
+    // Keyed by materialCategoryId, since a Group only exists within one Category.
+    const groupByKey = new Map<string, MaterialGroup>();
+    for (const g of groups) {
+      const key = `${g.materialCategoryId}::${canon(g.name)}`;
+      if (!groupByKey.has(key)) groupByKey.set(key, g);
+    }
     const uomByKey = new Map<string, UnitOfMeasurement>();
     for (const u of uoms) {
       for (const key of [u.code, u.name, u.symbol, u.shortName]) {
@@ -211,7 +327,12 @@ export class MaterialImportService {
     const seenNames = new Map<string, number>();
     const plan: Array<{
       row: number; name: string; longDescription: string;
-      categoryId: string; categoryName: string; groupId: string; uomId: string;
+      // categoryId/groupId/uomId are left unset here when the sheet names a
+      // Category, Group or UOM that doesn't exist yet — resolveMasterData()
+      // fills them in (creating the row if needed) inside the write transaction.
+      categoryId?: string; categoryName: string; categoryKey: string;
+      groupId?: string; groupName: string; groupKey: string;
+      uomId?: string; uomName: string; uomKey: string;
       existing?: Material;
     }> = [];
 
@@ -230,21 +351,24 @@ export class MaterialImportService {
         else seenNames.set(key, r.row);
       }
 
-      const category = r.category ? categoryByName.get(canon(r.category)) : undefined;
-      if (r.category && !category) rowErrors.push(`Material Category "${r.category}" not found`);
-      else if (category && !category.isActive) rowErrors.push(`Material Category "${r.category}" is inactive`);
+      // A Category/Group/UOM the sheet names but that isn't in the master data
+      // yet is CREATED during the import rather than rejected — only an
+      // existing-but-inactive one is still a validation error, since silently
+      // reactivating something the organization deliberately disabled would
+      // be surprising.
+      const categoryKey = canon(r.category);
+      const category = r.category ? categoryByName.get(categoryKey) : undefined;
+      if (category && !category.isActive) rowErrors.push(`Material Category "${r.category}" is inactive`);
 
       // A group belongs to one category, so it is looked up within the resolved category.
-      const group = category && r.group
-        ? groups.find(g => g.materialCategoryId === category.id && canon(g.name) === canon(r.group))
-        : undefined;
-      if (category && r.group && !group) {
-        rowErrors.push(`Material Group "${r.group}" not found in category "${category.name}"`);
-      } else if (group && !group.isActive) rowErrors.push(`Material Group "${r.group}" is inactive`);
+      // When the category itself is new, the group must be new too.
+      const groupKey = canon(r.group);
+      const group = category && r.group ? groupByKey.get(`${category.id}::${groupKey}`) : undefined;
+      if (group && !group.isActive) rowErrors.push(`Material Group "${r.group}" is inactive`);
 
-      const uom = r.uom ? uomByKey.get(canon(r.uom)) : undefined;
-      if (r.uom && !uom) rowErrors.push(`UOM "${r.uom}" not found`);
-      else if (uom && !uom.isActive) rowErrors.push(`UOM "${r.uom}" is inactive`);
+      const uomKey = canon(r.uom);
+      const uom = r.uom ? uomByKey.get(uomKey) : undefined;
+      if (uom && !uom.isActive) rowErrors.push(`UOM "${r.uom}" is inactive`);
 
       if (rowErrors.length) {
         errors.push({ row: r.row, message: rowErrors.join('; ') });
@@ -254,10 +378,15 @@ export class MaterialImportService {
         row: r.row,
         name: r.shortDescription,
         longDescription: r.longDescription,
-        categoryId: category!.id,
-        categoryName: category!.name,
-        groupId: group!.id,
-        uomId: uom!.id,
+        categoryId: category?.id,
+        categoryName: category?.name ?? r.category.trim(),
+        categoryKey,
+        groupId: group?.id,
+        groupName: group?.name ?? r.group.trim(),
+        groupKey,
+        uomId: uom?.id,
+        uomName: uom?.name ?? r.uom.trim(),
+        uomKey,
         existing: existingByName.get(key),
       });
     }
