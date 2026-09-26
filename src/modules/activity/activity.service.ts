@@ -1,6 +1,6 @@
 import {
   Injectable, NotFoundException, ConflictException, BadRequestException,
-  InternalServerErrorException, Logger,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
@@ -10,6 +10,7 @@ import {
   MasterCodeService,
   MasterSequenceKey,
 } from 'src/common/services/master-code.service';
+import { CustomLoggerService } from '../logger/custom-logger.service';
 import { Department } from '../department/entity/department.entity';
 import { Discipline } from '../discipline/entity/discipline.entity';
 import { DepartmentDiscipline } from '../department-discipline/entities/department-discipline.entity';
@@ -31,8 +32,6 @@ const ALLOWED_SORT_FIELDS = new Set(['name', 'code', 'displayOrder', 'createdAt'
 
 @Injectable()
 export class ActivityService {
-  private readonly logger = new Logger(ActivityService.name);
-
   constructor(
     @InjectRepository(Activity)
     private readonly activityRepo: Repository<Activity>,
@@ -44,6 +43,7 @@ export class ActivityService {
     private readonly mappingRepo: Repository<DepartmentDiscipline>,
     private readonly dataSource: DataSource,
     private readonly masterCodeService: MasterCodeService,
+    private readonly logger: CustomLoggerService,
   ) {}
 
   // ── Create single ─────────────────────────────────────────────────
@@ -98,7 +98,10 @@ export class ActivityService {
       return this.toResponse(saved, dept, disc);
     } catch (err: any) {
       if (err instanceof ConflictException || err instanceof NotFoundException) throw err;
-      this.logger.error('Failed to create activity', err?.message);
+      this.logger.error(
+        `Failed to create activity "${dto.name}" in organization ${organizationId}: ${err?.message}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       throw new InternalServerErrorException('Unable to create Activity');
     }
   }
@@ -202,7 +205,10 @@ export class ActivityService {
       };
     } catch (err: any) {
       await queryRunner.rollbackTransaction();
-      this.logger.error('Bulk activity create failed, transaction rolled back', err?.message);
+      this.logger.error(
+        `Bulk activity create failed for organization ${organizationId}, transaction rolled back: ${err?.message}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       throw new InternalServerErrorException('Unable to create Activities');
     } finally {
       await queryRunner.release();
@@ -345,7 +351,10 @@ export class ActivityService {
       const saved = await this.activityRepo.save(activity);
       return this.toResponse(saved, saved.department, saved.discipline);
     } catch (err: any) {
-      this.logger.error('Failed to update activity', err?.message);
+      this.logger.error(
+        `Failed to update activity ${id} in organization ${organizationId}: ${err?.message}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       throw new InternalServerErrorException('Unable to update Activity');
     }
   }

@@ -9,6 +9,7 @@ import {
   MasterCodeService,
   MasterSequenceKey,
 } from 'src/common/services/master-code.service';
+import { CustomLoggerService } from '../logger/custom-logger.service';
 import { MaterialCategory } from '../material-category/entities/material-category.entity';
 import { CreateMaterialGroupDto } from './dto/create-material-group.dto';
 import { UpdateMaterialGroupDto } from './dto/update-material-group.dto';
@@ -29,6 +30,7 @@ export class MaterialGroupService {
     @InjectRepository(MaterialCategory)
     private readonly mcRepo: Repository<MaterialCategory>,
     private readonly masterCodeService: MasterCodeService,
+    private readonly logger: CustomLoggerService,
   ) {}
 
   // ── Create ────────────────────────────────────────────────────────
@@ -61,6 +63,10 @@ export class MaterialGroupService {
         return queryRunner.manager.save(MaterialGroup, mg);
       },
     ).catch(err => {
+      this.logger.error(
+        `Failed to create material group "${dto.name}" under category ${dto.materialCategoryId} in organization ${organizationId}: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       if (err?.code === 'ER_DUP_ENTRY') {
         throw new ConflictException(
           'A Material Group with this code already exists in your organization',

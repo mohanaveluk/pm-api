@@ -1,13 +1,16 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { Storage } from '@google-cloud/storage';
 import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
+import * as path from 'path';
+import { CustomLoggerService } from '../../modules/logger/custom-logger.service';
 
 @Injectable()
 export class CloudStorageService {
   private storage: Storage;
   private bucketName: string;
 
-  constructor() {
+  constructor(private readonly logger: CustomLoggerService) {
     // Initialize Google Cloud Storage
     if (process.env.NODE_ENV === "development") {
       this.storage = new Storage({
@@ -30,7 +33,8 @@ export class CloudStorageService {
     }
 
     try {
-      const fileName = `${folder}/${uuidv4()}-${file.originalname}`;
+      //const fileName = `${folder}/${uuidv4()}-${file.originalname}`;
+      const fileName = `${folder}/${randomUUID()}-${this.sanitizeFileName(file.originalname)}`;
       const bucket = this.storage.bucket(this.bucketName);
       const fileUpload = bucket.file(fileName);
 
@@ -44,6 +48,10 @@ export class CloudStorageService {
 
       return new Promise((resolve, reject) => {
         stream.on('error', (error) => {
+          this.logger.error(
+            `Cloud storage upload failed for ${fileName}: ${error.message}`,
+            error.stack,
+          );
           reject(new BadRequestException(`Upload failed: ${error.message}`));
         });
 
@@ -53,9 +61,17 @@ export class CloudStorageService {
             //await fileUpload.makePublic();
 
             // Return the public URL
-            const publicUrl = `https://storage.googleapis.com/${this.bucketName}/${fileName}`;
+            const encodedFileName = fileName
+              .split('/')
+              .map(segment => encodeURIComponent(segment))
+              .join('/');
+            const publicUrl = `https://storage.googleapis.com/${this.bucketName}/${encodedFileName}`;
             resolve(publicUrl);
           } catch (error) {
+            this.logger.error(
+              `Failed to make file public for ${fileName}: ${error instanceof Error ? error.message : String(error)}`,
+              error instanceof Error ? error.stack : String(error),
+            );
             reject(
               new BadRequestException(
                 `Failed to make file public: ${error instanceof Error ? error.message : String(error)}`
@@ -67,6 +83,10 @@ export class CloudStorageService {
         stream.end(file.buffer);
       });
     } catch (error) {
+      this.logger.error(
+        `Cloud storage upload service error for file ${file?.originalname ?? 'unknown'}: ${error instanceof Error ? error.message : String(error)}`,
+        error instanceof Error ? error.stack : String(error),
+      );
       throw new BadRequestException(`Upload service error: ${error instanceof Error ? error.message : String(error) || error}`);
     }
   }
@@ -85,7 +105,10 @@ export class CloudStorageService {
       await file.delete();
     } catch (error) {
       // Don't throw error if file doesn't exist, just log it
-      console.warn(`Failed to delete file: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(
+        `Failed to delete file ${fileUrl}: ${error instanceof Error ? error.message : String(error)}`,
+        error instanceof Error ? error.stack : String(error),
+      );
     }
   }
 
@@ -104,6 +127,10 @@ export class CloudStorageService {
       const [contents] = await this.storage.bucket(this.bucketName).file(fileName).download();
       return contents;
     } catch (error) {
+      this.logger.error(
+        `Unable to read file ${fileUrl}: ${error instanceof Error ? error.message : String(error)}`,
+        error instanceof Error ? error.stack : String(error),
+      );
       throw new BadRequestException(
         `Unable to read file: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -117,7 +144,10 @@ export class CloudStorageService {
       if (bucketIndex === -1 || bucketIndex === urlParts.length - 1) {
         return null;
       }
-      return urlParts.slice(bucketIndex + 1).join('/');
+      return urlParts
+        .slice(bucketIndex + 1)
+        .map(segment => decodeURIComponent(segment))
+        .join('/');
     } catch {
       return null;
     }
@@ -154,4 +184,19 @@ export class CloudStorageService {
 
     return true;
   }
+
+  private sanitizeFileName(originalName: string): string {
+    const ext = path.extname(originalName).toLowerCase();          // ".doc"
+    const base = path.basename(originalName, path.extname(originalName));
+
+    const safeBase = base
+      .normalize('NFKD')                 // split accented chars
+      .replace(/[\u0300-\u036f]/g, '')   // drop diacritics
+      .replace(/[^a-zA-Z0-9._-]+/g, '-') // anything unsafe -> "-"
+      .replace(/-+/g, '-')               // collapse repeats
+      .replace(/^[-.]+|[-.]+$/g, '')     // trim leading/trailing - or .
+      .slice(0, 100);                    // keep paths reasonable
+
+    return `${safeBase || 'file'}${ext}`;
+  }  
 }

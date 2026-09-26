@@ -7,6 +7,7 @@ import { MaterialService } from './material.service';
 import { MaterialCodeService } from './material-code.service';
 import { MaterialUsageValidationService } from './material-usage-validation.service';
 import { CloudStorageService } from 'src/common/services/cloud-storage.service';
+import { CustomLoggerService } from '../logger/custom-logger.service';
 
 import { Material }            from './entities/material.entity';
 import { MaterialCodeCounter } from './entities/material-code-counter.entity';
@@ -168,6 +169,7 @@ describe('MaterialService.clone', () => {
         { provide: getRepositoryToken(User),                useValue: makeRepo() },
         { provide: DataSource,          useValue: dataSource },
         { provide: CloudStorageService, useValue: { isFileValid: jest.fn(), uploadFile: jest.fn() } },
+        { provide: CustomLoggerService, useValue: { log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(), verbose: jest.fn() } },
       ],
     }).compile();
 
@@ -436,6 +438,7 @@ describe('MaterialService — purchase-order lock and documents', () => {
         { provide: getRepositoryToken(User),                useValue: makeRepo() },
         { provide: DataSource,          useValue: dataSource },
         { provide: CloudStorageService, useValue: { isFileValid: jest.fn(), uploadFile: jest.fn() } },
+        { provide: CustomLoggerService, useValue: { log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(), verbose: jest.fn() } },
       ],
     }).compile();
 
@@ -960,6 +963,7 @@ describe('MaterialService — documents in fetch responses', () => {
         { provide: getRepositoryToken(User),                useValue: makeRepo() },
         { provide: DataSource,          useValue: { createQueryRunner: jest.fn(), transaction: jest.fn() } },
         { provide: CloudStorageService, useValue: { isFileValid: jest.fn(), uploadFile: jest.fn() } },
+        { provide: CustomLoggerService, useValue: { log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(), verbose: jest.fn() } },
       ],
     }).compile();
 
@@ -1214,6 +1218,7 @@ describe('MaterialService — purchase-order lock matrix', () => {
           },
         },
         { provide: CloudStorageService, useValue: { isFileValid: jest.fn(), uploadFile: jest.fn() } },
+        { provide: CustomLoggerService, useValue: { log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(), verbose: jest.fn() } },
       ],
     }).compile();
 

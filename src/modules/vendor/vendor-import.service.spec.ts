@@ -50,6 +50,7 @@ describe('VendorImportService', () => {
           return '0001';
         }),
       } as any,
+      { log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(), verbose: jest.fn() } as any,
     );
   });
 

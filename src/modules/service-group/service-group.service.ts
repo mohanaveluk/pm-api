@@ -1,10 +1,11 @@
 import {
   Injectable, NotFoundException, ConflictException, BadRequestException,
-  InternalServerErrorException, Logger,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
+import { CustomLoggerService } from '../logger/custom-logger.service';
 import { ServiceGroup } from './entities/service-group.entity';
 import { ServiceGroupActivity } from './entities/service-group-activity.entity';
 import { ServiceGroupPermission } from './entities/service-group-permission.entity';
@@ -32,8 +33,6 @@ const ALLOWED_SORT_FIELDS = new Set(['name', 'code', 'createdAt', 'groupType']);
 
 @Injectable()
 export class ServiceGroupService {
-  private readonly logger = new Logger(ServiceGroupService.name);
-
   constructor(
     @InjectRepository(ServiceGroup)
     private readonly sgRepo: Repository<ServiceGroup>,
@@ -44,6 +43,7 @@ export class ServiceGroupService {
     @InjectRepository(Activity)
     private readonly activityRepo: Repository<Activity>,
     private readonly dataSource: DataSource,
+    private readonly logger: CustomLoggerService,
   ) {}
 
   // ── Create ────────────────────────────────────────────────────────
@@ -91,7 +91,10 @@ export class ServiceGroupService {
     } catch (err: any) {
       await queryRunner.rollbackTransaction();
       if (err instanceof ConflictException || err instanceof BadRequestException || err instanceof NotFoundException) throw err;
-      this.logger.error('Failed to create service group', err?.message);
+      this.logger.error(
+        `Failed to create service group "${dto.name}" in organization ${organizationId}: ${err?.message}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       throw new InternalServerErrorException('Unable to create Service Group');
     } finally {
       await queryRunner.release();
@@ -204,7 +207,10 @@ export class ServiceGroupService {
     } catch (err: any) {
       await queryRunner.rollbackTransaction();
       if (err instanceof ConflictException || err instanceof BadRequestException || err instanceof NotFoundException) throw err;
-      this.logger.error('Failed to update service group', err?.message);
+      this.logger.error(
+        `Failed to update service group ${id} in organization ${organizationId}: ${err?.message}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       throw new InternalServerErrorException('Unable to update Service Group');
     } finally {
       await queryRunner.release();

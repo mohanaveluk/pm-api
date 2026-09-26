@@ -7,6 +7,9 @@ import { ConflictException } from '@nestjs/common';
 
 import { MasterCodeService, MasterSequenceKey } from 'src/common/services/master-code.service';
 import { MasterCodeCounter } from 'src/common/entities/master-code-counter.entity';
+import { CustomLoggerService } from '../logger/custom-logger.service';
+
+const LOGGER_MOCK = { provide: CustomLoggerService, useValue: { log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(), verbose: jest.fn() } };
 
 import { MaterialCategoryService } from './material-category.service';
 import { MaterialCategory }        from './entities/material-category.entity';
@@ -92,6 +95,7 @@ describe('Master code generation across the four masters', () => {
           { provide: getRepositoryToken(MaterialCategory),   useValue: repo },
           { provide: getRepositoryToken(MasterCodeCounter),  useValue: makeRepo() },
           { provide: DataSource, useValue: harness.dataSource },
+          LOGGER_MOCK,
         ],
       }).compile();
       service = module.get(MaterialCategoryService);
@@ -175,6 +179,7 @@ describe('Master code generation across the four masters', () => {
           }) },
           { provide: getRepositoryToken(MasterCodeCounter), useValue: makeRepo() },
           { provide: DataSource, useValue: harness.dataSource },
+          LOGGER_MOCK,
         ],
       }).compile();
       const service = module.get(MaterialGroupService);
@@ -199,6 +204,7 @@ describe('Master code generation across the four masters', () => {
           }) },
           { provide: getRepositoryToken(MasterCodeCounter), useValue: makeRepo() },
           { provide: DataSource, useValue: harness.dataSource },
+          LOGGER_MOCK,
         ],
       }).compile();
       const service = module.get(MaterialGroupService);
@@ -228,6 +234,7 @@ describe('Master code generation across the four masters', () => {
           { provide: getRepositoryToken(UnitOfMeasurement), useValue: makeRepo() },
           { provide: getRepositoryToken(MasterCodeCounter), useValue: makeRepo() },
           { provide: DataSource, useValue: harness.dataSource },
+          LOGGER_MOCK,
         ],
       }).compile();
       const service = module.get(UnitOfMeasurementService);

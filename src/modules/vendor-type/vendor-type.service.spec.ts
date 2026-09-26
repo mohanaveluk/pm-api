@@ -7,6 +7,7 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 
 import { MasterCodeService, MasterSequenceKey } from 'src/common/services/master-code.service';
 import { MasterCodeCounter } from 'src/common/entities/master-code-counter.entity';
+import { CustomLoggerService } from '../logger/custom-logger.service';
 
 import { VendorTypeService } from './vendor-type.service';
 import { VendorType } from './entity/vendor-type.entity';
@@ -75,6 +76,7 @@ describe('VendorTypeService', () => {
         { provide: getRepositoryToken(VendorType),        useValue: repo },
         { provide: getRepositoryToken(MasterCodeCounter), useValue: makeRepo() },
         { provide: DataSource, useValue: harness.dataSource },
+        { provide: CustomLoggerService, useValue: { log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(), verbose: jest.fn() } },
       ],
     }).compile();
     service = module.get(VendorTypeService);

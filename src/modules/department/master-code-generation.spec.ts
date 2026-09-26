@@ -7,6 +7,9 @@ import { ConflictException } from '@nestjs/common';
 
 import { MasterCodeService, MasterSequenceKey } from 'src/common/services/master-code.service';
 import { MasterCodeCounter } from 'src/common/entities/master-code-counter.entity';
+import { CustomLoggerService } from '../logger/custom-logger.service';
+
+const LOGGER_MOCK = { provide: CustomLoggerService, useValue: { log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(), verbose: jest.fn() } };
 
 import { DepartmentService } from './department.service';
 import { Department }        from './entity/department.entity';
@@ -78,6 +81,7 @@ describe('Server-generated codes: Department, Discipline, Activity', () => {
           { provide: getRepositoryToken(Department),        useValue: repo },
           { provide: getRepositoryToken(MasterCodeCounter), useValue: makeRepo() },
           { provide: DataSource, useValue: harness.dataSource },
+          LOGGER_MOCK,
         ],
       }).compile();
       service = module.get(DepartmentService);
@@ -160,6 +164,7 @@ describe('Server-generated codes: Department, Discipline, Activity', () => {
           { provide: getRepositoryToken(Department),        useValue: makeRepo({ findOne: jest.fn(async () => activeDepartment) }) },
           { provide: getRepositoryToken(MasterCodeCounter), useValue: makeRepo() },
           { provide: DataSource, useValue: harness.dataSource },
+          LOGGER_MOCK,
         ],
       }).compile();
       return { service: module.get(DisciplineService), harness };
@@ -215,6 +220,7 @@ describe('Server-generated codes: Department, Discipline, Activity', () => {
           }) },
           { provide: getRepositoryToken(MasterCodeCounter), useValue: makeRepo() },
           { provide: DataSource, useValue: harness.dataSource },
+          LOGGER_MOCK,
         ],
       }).compile();
       return { service: module.get(ActivityService), harness, activityRepo };

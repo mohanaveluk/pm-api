@@ -19,6 +19,7 @@ import { UpdateOrganizationDto, OrganizationDocumentInputDto } from './dto/updat
 import { orgRegistrationTemplate } from 'src/shared/email/templates/org-registration.template';
 import { orgAdminCredentialsTemplate } from 'src/shared/email/templates/org-admin-credentials.template';
 import { VerifyOrganizationRegistration } from 'src/shared/email/templates/verify-email-template';
+import { CustomLoggerService } from '../logger/custom-logger.service';
 
 const OTP_EXPIRY_MINUTES = 30;
 const MAX_OTP_ATTEMPTS   = 5;
@@ -39,6 +40,7 @@ export class OrganizationService {
     @InjectRepository(OrganizationDocument)
     private readonly docRepo: Repository<OrganizationDocument>,
     private readonly cloudStorage: CloudStorageService,
+    private readonly logger: CustomLoggerService,
   ) {}
 
   async register(dto: RegisterOrganizationDto, domain: string): Promise<{ success: boolean; message: string }> {
@@ -47,42 +49,50 @@ export class OrganizationService {
       throw new ConflictException('An organization with this email already exists');
     }
 
-    let org = existing;
-    if (!org) {
-      org = this.orgRepo.create({
-        ...dto,
-        oguid: uuidv4(),
-        organizationCode: this.generateOrgCode(),
-        subscriptionStatus: SubscriptionStatus.PENDING,
-        emailVerified: false,
-        isActive: false,
+    try {
+      let org = existing;
+      if (!org) {
+        org = this.orgRepo.create({
+          ...dto,
+          oguid: uuidv4(),
+          organizationCode: this.generateOrgCode(),
+          subscriptionStatus: SubscriptionStatus.PENDING,
+          emailVerified: false,
+          isActive: false,
+        });
+        org = await this.orgRepo.save(org);
+      }
+
+      const otp = this.generateOtp();
+      const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
+
+      await this.tokenRepo.delete({ organizationId: org.id });
+
+      await this.tokenRepo.save(
+        this.tokenRepo.create({
+          organizationId: org.id,
+          email: dto.email,
+          otpCode: otp,
+          expiresAt,
+          attemptCount: 0,
+        }),
+      );
+
+      await this.emailService.sendEmail({
+        to: dto.email,
+        subject: 'Verify Your Organization Email',
+        //html: orgRegistrationTemplate(otp, org.oguid, dto.organizationName),
+        html: VerifyOrganizationRegistration(otp, org.oguid, dto.organizationName, domain),
       });
-      org = await this.orgRepo.save(org);
+
+      return { success: true, message: 'Verification code sent to your email' };
+    } catch (err) {
+      this.logger.error(
+        `Organization registration failed for ${dto.email}: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+      throw err;
     }
-
-    const otp = this.generateOtp();
-    const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
-
-    await this.tokenRepo.delete({ organizationId: org.id });
-
-    await this.tokenRepo.save(
-      this.tokenRepo.create({
-        organizationId: org.id,
-        email: dto.email,
-        otpCode: otp,
-        expiresAt,
-        attemptCount: 0,
-      }),
-    );
-
-    await this.emailService.sendEmail({
-      to: dto.email,
-      subject: 'Verify Your Organization Email',
-      //html: orgRegistrationTemplate(otp, org.oguid, dto.organizationName),
-      html: VerifyOrganizationRegistration(otp, org.oguid, dto.organizationName, domain),
-    });
-
-    return { success: true, message: 'Verification code sent to your email' };
   }
 
   async verifyEmail(dto: VerifyOrganizationEmailDto): Promise<{ success: boolean, organizationId: string }> {
@@ -182,10 +192,18 @@ export class OrganizationService {
     const { documents, ...profile } = dto;
     Object.assign(org, profile);
     org.updatedBy = updatedBy;
-    const saved = await this.orgRepo.save(org);
 
-    if (documents !== undefined) await this.syncDocuments(organizationId, documents, updatedBy);
-    return saved;
+    try {
+      const saved = await this.orgRepo.save(org);
+      if (documents !== undefined) await this.syncDocuments(organizationId, documents, updatedBy);
+      return saved;
+    } catch (err) {
+      this.logger.error(
+        `Failed to update organization profile ${organizationId}: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+      throw err;
+    }
   }
 
   // ── Documents ─────────────────────────────────────────────────────
@@ -201,7 +219,15 @@ export class OrganizationService {
   // organization_documents until the profile is saved with the document listed.
   async uploadDocumentFile(organizationId: string, file: Express.Multer.File) {
     if (!file) throw new BadRequestException('No file provided');
-    return this.storeFile(organizationId, file);
+    try {
+      return await this.storeFile(organizationId, file);
+    } catch (err) {
+      this.logger.error(
+        `Organization document upload failed for organization ${organizationId} (file: ${file?.originalname ?? 'unknown'}): ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+      throw err;
+    }
   }
 
   // Makes organization_documents match the list the profile form was saved with:

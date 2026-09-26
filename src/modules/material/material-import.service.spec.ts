@@ -6,6 +6,7 @@ const ORG = 'org-1';
 const CAT = { id: 'cat-1', name: 'Raw Material', isActive: true };
 const GRP = { id: 'grp-1', name: 'Raw Material Group', materialCategoryId: 'cat-1', isActive: true };
 const UOM = { id: 'uom-1', code: 'NOS', name: 'Numbers', symbol: 'Nos', shortName: null, isActive: true };
+const LOGGER_MOCK = { log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(), verbose: jest.fn() };
 
 function file(name: string, content: string | Buffer): Express.Multer.File {
   const buffer = Buffer.isBuffer(content) ? content : Buffer.from(content);
@@ -36,6 +37,7 @@ describe('MaterialImportService', () => {
       { createQueryRunner: () => qr } as any,
       { deriveCategoryPrefix: () => 'RAW', generateCode: jest.fn(async () => 'RAW000001') } as any,
       { generateCode: jest.fn(async () => '0001') } as any,
+      LOGGER_MOCK as any,
     );
   });
 
@@ -69,6 +71,7 @@ describe('MaterialImportService', () => {
       { createQueryRunner: () => qr } as any,
       { deriveCategoryPrefix: () => 'CAT', generateCode: jest.fn(async () => 'CAT000001') } as any,
       { generateCode: jest.fn(async () => '0001') } as any,
+      LOGGER_MOCK as any,
     );
     const singularCsv = 'Short Description,UOM,Material Category,Material Group\n' +
       'Monitor,Nos,category,box\n';
@@ -146,6 +149,7 @@ describe('MaterialImportService', () => {
         { createQueryRunner: () => qr } as any,
         { deriveCategoryPrefix: () => 'ELE', generateCode: jest.fn(async () => 'ELE000001') } as any,
         masterCodeService as any,
+        LOGGER_MOCK as any,
       );
       const newCsv = 'Short Description,UOM,Material Category,Material Group\n' +
         'Circuit Breaker,Each,Electricals,Switchgear\n';
@@ -178,6 +182,7 @@ describe('MaterialImportService', () => {
         { createQueryRunner: () => qr } as any,
         { deriveCategoryPrefix: () => 'ELE', generateCode: jest.fn(async () => 'ELE000001') } as any,
         masterCodeService as any,
+        LOGGER_MOCK as any,
       );
       const newCsv = 'Short Description,UOM,Material Category,Material Group\n' +
         'Circuit Breaker,Each,Electricals,Switchgear\n' +
@@ -201,6 +206,7 @@ describe('MaterialImportService', () => {
         { createQueryRunner: () => qr } as any,
         { deriveCategoryPrefix: () => 'RAW', generateCode: jest.fn(async () => 'RAW000001') } as any,
         { generateCode: jest.fn(async () => '0001') } as any,
+        LOGGER_MOCK as any,
       );
       await expect(svc.import(file('m.csv', csv), ORG, 'u'))
         .rejects.toMatchObject({

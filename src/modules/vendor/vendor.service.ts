@@ -3,7 +3,6 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
-  Logger,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
@@ -32,6 +31,7 @@ import { User }             from '../user/entity/user.entity';
 import { CloudStorageService } from 'src/common/services/cloud-storage.service';
 import { EmailService } from 'src/shared/email/email.service';
 import { vendorStatusApprovalTemplate } from 'src/shared/email/templates/vendor-status-approval.template';
+import { CustomLoggerService } from '../logger/custom-logger.service';
 
 import { CreateVendorDto } from './dto/create-vendor.dto';
 import { UpdateVendorDto } from './dto/update-vendor.dto';
@@ -133,8 +133,6 @@ const VENDOR_SINGLETON_DOCUMENT_TYPES = new Set<VendorDocumentType>([
 
 @Injectable()
 export class VendorService {
-  private readonly logger = new Logger(VendorService.name);
-
   constructor(
     @InjectRepository(Vendor)
     private readonly vendorRepo: Repository<Vendor>,
@@ -175,6 +173,7 @@ export class VendorService {
     private readonly usageValidation: VendorUsageValidationService,
     private readonly cloudStorageService: CloudStorageService,
     private readonly emailService: EmailService,
+    private readonly logger: CustomLoggerService,
   ) {}
 
   // ══ Dependency validators ═════════════════════════════════════════════
@@ -707,6 +706,10 @@ export class VendorService {
       return this.findOne(vendorId, organizationId, userEmail, /* role */ '');
     } catch (err: any) {
       await queryRunner.rollbackTransaction();
+      this.logger.error(
+        `Vendor creation rolled back for organization ${organizationId} by ${userEmail}: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       if (err?.code === 'ER_DUP_ENTRY') {
         // The counter lock makes a code collision effectively impossible; this
         // catches the child-table unique constraints (e.g. vendor+material).
@@ -908,6 +911,10 @@ export class VendorService {
       return this.findOne(cloneId, organizationId, userEmail, /* role */ '');
     } catch (err) {
       await queryRunner.rollbackTransaction();
+      this.logger.error(
+        `Vendor clone of ${id} rolled back for organization ${organizationId} by ${userEmail}: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       if ((err as any)?.code === 'ER_DUP_ENTRY') {
         throw new ConflictException(
           'A conflicting vendor record already exists in your organization',
@@ -1458,13 +1465,21 @@ export class VendorService {
   ): Promise<VendorDocumentResponseDto> {
     const vendor = await this.findVendorOrThrow(id, organizationId, [], owner);
 
-    return this.dataSource.transaction(async manager => {
-      const document = await this.appendDocumentRow(manager, vendor.id, organizationId, dto, userEmail);
-      this.logger.log(
-        `Document ${dto.documentType} v${document.version} added to vendor ${vendor.code} by ${userEmail}`,
+    try {
+      return await this.dataSource.transaction(async manager => {
+        const document = await this.appendDocumentRow(manager, vendor.id, organizationId, dto, userEmail);
+        this.logger.log(
+          `Document ${dto.documentType} v${document.version} added to vendor ${vendor.code} by ${userEmail}`,
+        );
+        return this.toDocumentResponse(document);
+      });
+    } catch (err) {
+      this.logger.error(
+        `Adding a ${dto.documentType} document to vendor ${vendor.code} failed: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : String(err),
       );
-      return this.toDocumentResponse(document);
-    });
+      throw err;
+    }
   }
 
   // Soft-deletes a document. Unconditional — nothing about a vendor's status
@@ -1758,6 +1773,7 @@ export class VendorService {
     } catch (err) {
       this.logger.error(
         `Vendor-activated email for vendor ${vendor.code} could not be sent: ${err instanceof Error ? err.message : 'unknown error'}`,
+        err instanceof Error ? err.stack : String(err),
       );
       return false;
     }
@@ -1833,6 +1849,10 @@ export class VendorService {
       await queryRunner.commitTransaction();
     } catch (err) {
       await queryRunner.rollbackTransaction();
+      this.logger.error(
+        `Vendor update rolled back for vendor ${id} in organization ${organizationId} by ${userEmail}: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       throw err;
     } finally {
       await queryRunner.release();
@@ -2156,6 +2176,7 @@ export class VendorService {
       // still act from the pending-requests screen.
       this.logger.error(
         `Approval email for vendor ${vendor.code} could not be sent: ${err instanceof Error ? err.message : 'unknown error'}`,
+        err instanceof Error ? err.stack : String(err),
       );
       return false;
     }
@@ -2208,6 +2229,7 @@ export class VendorService {
       // been persisted by the time this runs.
       this.logger.error(
         `Withdrawal email for vendor ${vendor.code} could not be sent: ${err instanceof Error ? err.message : 'unknown error'}`,
+        err instanceof Error ? err.stack : String(err),
       );
       return false;
     }
@@ -2250,6 +2272,7 @@ export class VendorService {
       // A mail outage must not undo a decision that has already been persisted.
       this.logger.error(
         `Approved-decision email for vendor ${vendor.code} could not be sent: ${err instanceof Error ? err.message : 'unknown error'}`,
+        err instanceof Error ? err.stack : String(err),
       );
       return false;
     }
@@ -2289,6 +2312,7 @@ export class VendorService {
     } catch (err) {
       this.logger.error(
         `Rejected-decision email for vendor ${vendor.code} could not be sent: ${err instanceof Error ? err.message : 'unknown error'}`,
+        err instanceof Error ? err.stack : String(err),
       );
       return false;
     }
@@ -2641,11 +2665,19 @@ export class VendorService {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
 
-    await this.cloudStorageService.isFileValid(file);
+    try {
+      await this.cloudStorageService.isFileValid(file);
 
-    const folder = `pm/vendor/${user.id}`;
-    const url = await this.cloudStorageService.uploadFile(file, folder);
+      const folder = `pm/vendor/${user.id}`;
+      const url = await this.cloudStorageService.uploadFile(file, folder);
 
-    return { message: 'Vendor document uploaded successfully', url };
+      return { message: 'Vendor document uploaded successfully', url };
+    } catch (err) {
+      this.logger.error(
+        `Vendor document upload failed for user ${userId} (file: ${file?.originalname ?? 'unknown'}): ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+      throw err;
+    }
   }
 }

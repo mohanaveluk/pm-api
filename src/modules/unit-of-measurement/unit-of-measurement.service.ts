@@ -9,6 +9,7 @@ import {
   MasterCodeService,
   MasterSequenceKey,
 } from 'src/common/services/master-code.service';
+import { CustomLoggerService } from '../logger/custom-logger.service';
 import { CreateUnitOfMeasurementDto } from './dto/create-unit-of-measurement.dto';
 import { UpdateUnitOfMeasurementDto } from './dto/update-unit-of-measurement.dto';
 import { UnitOfMeasurementQueryDto } from './dto/unit-of-measurement-query.dto';
@@ -27,6 +28,7 @@ export class UnitOfMeasurementService {
     @InjectRepository(UnitOfMeasurement)
     private readonly uomRepo: Repository<UnitOfMeasurement>,
     private readonly masterCodeService: MasterCodeService,
+    private readonly logger: CustomLoggerService,
   ) {}
 
   // ── Create ────────────────────────────────────────────────────────
@@ -55,6 +57,10 @@ export class UnitOfMeasurementService {
         return queryRunner.manager.save(UnitOfMeasurement, uom);
       },
     ).catch(err => {
+      this.logger.error(
+        `Failed to create unit of measurement "${dto.name}" in organization ${organizationId}: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : String(err),
+      );
       if (err?.code === 'ER_DUP_ENTRY') {
         throw new ConflictException(
           'A Unit of Measurement with this code already exists in your organization',
