@@ -144,13 +144,15 @@ export class VendorController {
     summary: 'Bulk import vendors from an .xlsx, .csv or .json file (max 5 MB)',
     description:
       'Columns: Vendor Code (ignored - codes are generated), Vendor Name, Vendor Type, ' +
-      'Material Category, Contact details. Vendor Type and Material Category are matched by ' +
-      'name (case- and plural-insensitive). A blank Vendor Type defaults to "Supplier"; if the ' +
-      'resolved type does not exist yet it is created. A vendor is matched on Vendor Name + ' +
-      'Vendor Type + Material Category together — a match is updated (replaced), otherwise a ' +
-      'new vendor is created with a generated code. The whole import is one transaction, ' +
-      'including any Vendor Type it creates: any invalid row (422, with per-row errors) or ' +
-      'failure rolls everything back.',
+      'Material Category, Contact details, Email and Mobile Number (both optional; when ' +
+      'given they are validated and saved on the vendor and its primary contact, and a blank ' +
+      'cell never clears stored values). Vendor Type and Material Category are matched by ' +
+      'name (case- and plural-insensitive). A blank Vendor Type defaults to "Supplier"; a ' +
+      'Vendor Type or Material Category that does not exist yet is created. A vendor is matched ' +
+      'on Vendor Name + Vendor Type + Material Category together — a match is updated ' +
+      '(replaced), otherwise a new vendor is created with a generated code. The whole import ' +
+      'is one transaction, including any Vendor Type or Material Category it creates: any ' +
+      'invalid row (422, with per-row errors) or failure rolls everything back.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({ schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } })

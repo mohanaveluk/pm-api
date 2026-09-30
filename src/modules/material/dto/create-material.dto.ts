@@ -50,21 +50,6 @@ export class MaterialTechnicalSpecDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   materialComposition?: string;
 
-  @ApiPropertyOptional({ example: '6" NB × 6000mm, SCH 40' })
-  @IsOptional() @IsString() @Length(1, 500)
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
-  dimensions?: string;
-
-  @ApiPropertyOptional({ example: '28.26 kg/m' })
-  @IsOptional() @IsString() @Length(1, 100)
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
-  weight?: string;
-
-  @ApiPropertyOptional({ example: 'Black / Mill Finish' })
-  @IsOptional() @IsString() @Length(1, 100)
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
-  colorFinish?: string;
-
   @ApiPropertyOptional({ example: '-29°C to 427°C' })
   @IsOptional() @IsString() @Length(1, 255)
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
@@ -122,6 +107,18 @@ export class MaterialInventoryDto {
   @ApiPropertyOptional({ example: 500 })
   @IsOptional() @IsNumber() @Min(0)
   maximumStockLevel?: number;
+
+  @ApiPropertyOptional({ example: 50 })
+  @IsOptional() @IsNumber() @Min(0)
+  minimumOrderQuantity?: number;
+
+  @ApiPropertyOptional({ example: 100 })
+  @IsOptional() @IsNumber() @Min(0)
+  reorderLevel?: number;
+
+  @ApiPropertyOptional({ example: 200 })
+  @IsOptional() @IsNumber() @Min(0)
+  reorderQuantity?: number;
 }
 
 export class MaterialQualityDto {
@@ -229,6 +226,21 @@ export class MaterialSafetyDto {
 }
 
 export class MaterialLogisticsDto {
+  @ApiPropertyOptional({ example: '6" NB × 6000mm, SCH 40' })
+  @IsOptional() @IsString() @Length(1, 500)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  dimensions?: string;
+
+  @ApiPropertyOptional({ example: '28.26 kg/m' })
+  @IsOptional() @IsString() @Length(1, 100)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  weight?: string;
+
+  @ApiPropertyOptional({ example: 'Black / Mill Finish' })
+  @IsOptional() @IsString() @Length(1, 100)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  colorFinish?: string;
+
   @ApiPropertyOptional({ enum: PackagingType })
   @IsOptional() @IsEnum(PackagingType)
   packagingType?: PackagingType;
@@ -312,18 +324,6 @@ export class MaterialProcurementDto {
   @ApiPropertyOptional({ example: 90, description: 'Lead time in calendar days' })
   @IsOptional() @IsInt() @Min(0)
   leadTimeDays?: number;
-
-  @ApiPropertyOptional({ example: 50 })
-  @IsOptional() @IsNumber() @Min(0)
-  minimumOrderQuantity?: number;
-
-  @ApiPropertyOptional({ example: 100 })
-  @IsOptional() @IsNumber() @Min(0)
-  reorderLevel?: number;
-
-  @ApiPropertyOptional({ example: 200 })
-  @IsOptional() @IsNumber() @Min(0)
-  reorderQuantity?: number;
 
   @ApiPropertyOptional({ description: 'Purchase UOM UUID (e.g. buy by pallet while stocking by EA)' })
   @IsOptional() @IsString()

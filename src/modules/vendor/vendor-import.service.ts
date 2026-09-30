@@ -11,6 +11,7 @@ import { v4 as uuidv4 } from 'uuid';
 import * as ExcelJS from 'exceljs';
 
 import { Vendor } from './entities/vendor.entity';
+import { VendorContact } from './entities/vendor-contact.entity';
 import { VendorType } from '../vendor-type/entity/vendor-type.entity';
 import { MaterialCategory } from '../material-category/entities/material-category.entity';
 import { IndustryCategory } from '../industry-category/entities/industry-category.entity';
@@ -44,7 +45,19 @@ const HEADER_ALIASES: Record<string, keyof RawImportRow> = {
   contactdetails: 'contactDetails',
   contact: 'contactDetails',
   contactperson: 'contactDetails',
+  email: 'email',
+  emailaddress: 'email',
+  contactemail: 'email',
+  mobile: 'mobile',
+  mobilenumber: 'mobile',
+  phone: 'mobile',
+  phonenumber: 'mobile',
+  contactnumber: 'mobile',
 };
+
+// Same shape rule the create/update DTOs apply to a vendor's phone numbers.
+const PHONE_REGEX = /^\+?[0-9\s\-().]{6,20}$/;
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 interface RawImportRow {
   row: number;
@@ -53,6 +66,8 @@ interface RawImportRow {
   vendorType: string;
   materialCategory: string;
   contactDetails: string;
+  email: string;
+  mobile: string;
 }
 
 export interface VendorImportRowError { row: number; message: string }
@@ -62,6 +77,7 @@ export interface VendorImportResult {
   created: number;
   updated: number;
   vendorTypesCreated: string[];
+  materialCategoriesCreated: string[];
   items: { row: number; name: string; code: string; action: 'created' | 'updated' }[];
 }
 
@@ -95,7 +111,10 @@ interface PlannedRow {
   row: number;
   vendorName: string;
   contactDetails: string;
-  materialCategoryId: string;
+  email?: string;
+  mobileNumber?: string;
+  materialCategoryName: string;
+  materialCategoryId?: string; // set once resolved/created in the transaction
   vendorTypeName: string;
   vendorTypeId?: string;      // set once resolved/created in the transaction
 }
@@ -133,14 +152,45 @@ export class VendorImportService {
       throw new BadRequestException(`The file has ${raw.length} rows; the maximum per import is ${MAX_ROWS}`);
     }
 
-    const { plan, newVendorTypeNames } = await this.validate(raw, organizationId);
+    const { plan, newVendorTypeNames, newCategoryNames } = await this.validate(raw, organizationId);
 
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
     try {
-      // Types missing from the org are created once each, inside this same
-      // transaction, so a later failure rolls them back along with everything else.
+      // Material Categories and Vendor Types missing from the org are created
+      // once each, inside this same transaction, so a later failure rolls them
+      // back along with everything else.
+      const createdCategoryIds = new Map<string, string>(); // canon(name) -> id
+      const materialCategoriesCreated: string[] = [];
+      for (const name of newCategoryNames) {
+        const code = await this.masterCodeService.generateCode(
+          queryRunner, organizationId, MasterSequenceKey.MATERIAL_CATEGORY,
+        );
+        const category = queryRunner.manager.create(MaterialCategory, {
+          id: uuidv4(),
+          dguid: uuidv4(),
+          organizationId,
+          code,
+          name,
+          isActive: true,
+          isSystem: false,
+          displayOrder: 0,
+          createdBy: userEmail,
+          updatedBy: userEmail,
+        });
+        await queryRunner.manager.save(MaterialCategory, category);
+        createdCategoryIds.set(canon(name), category.id);
+        materialCategoriesCreated.push(name);
+      }
+      for (const p of plan) {
+        if (!p.materialCategoryId) p.materialCategoryId = createdCategoryIds.get(canon(p.materialCategoryName));
+        if (!p.materialCategoryId) {
+          // Defensive only — validate() guarantees every row resolves or is queued above.
+          throw new Error(`Unable to resolve Material Category "${p.materialCategoryName}" for row ${p.row}`);
+        }
+      }
+
       const createdTypeIds = new Map<string, string>(); // canon(name) -> id
       const vendorTypesCreated: string[] = [];
       for (const name of newVendorTypeNames) {
@@ -182,7 +232,7 @@ export class VendorImportService {
       });
 
       const result: VendorImportResult = {
-        total: plan.length, created: 0, updated: 0, vendorTypesCreated, items: [],
+        total: plan.length, created: 0, updated: 0, vendorTypesCreated, materialCategoriesCreated, items: [],
       };
 
       for (const p of plan) {
@@ -194,10 +244,16 @@ export class VendorImportService {
 
         if (existing) {
           existing.vendorTypeId = p.vendorTypeId!;
-          existing.productCategories = [p.materialCategoryId];
+          existing.productCategories = [p.materialCategoryId!];
+          // Optional columns only overwrite when the sheet actually supplies them.
           if (p.contactDetails) existing.primaryContactPerson = p.contactDetails;
+          if (p.email) existing.email = p.email;
+          if (p.mobileNumber) existing.mobileNumber = p.mobileNumber;
           existing.updatedBy = userEmail;
           await queryRunner.manager.save(Vendor, existing);
+          if (p.contactDetails || p.email || p.mobileNumber) {
+            await this.savePrimaryContact(queryRunner, existing, p, userEmail);
+          }
           result.updated++;
           result.items.push({ row: p.row, name: p.vendorName, code: existing.code, action: 'updated' });
         } else {
@@ -211,14 +267,19 @@ export class VendorImportService {
             vendorName: p.vendorName,
             vendorTypeId: p.vendorTypeId,
             industryCategoryId: defaultIndustryCategoryId,
-            productCategories: [p.materialCategoryId],
+            productCategories: [p.materialCategoryId!],
             primaryContactPerson: p.contactDetails || undefined,
+            email: p.email,
+            mobileNumber: p.mobileNumber,
             vendorStatus: VendorStatus.UNDER_EVALUATION,
             isActive: false,
             createdBy: userEmail,
             updatedBy: userEmail,
           } as Partial<Vendor>);
           await queryRunner.manager.save(Vendor, vendor);
+          if (p.contactDetails || p.email || p.mobileNumber) {
+            await this.savePrimaryContact(queryRunner, vendor, p, userEmail);
+          }
           result.created++;
           result.items.push({ row: p.row, name: p.vendorName, code, action: 'created' });
         }
@@ -227,7 +288,8 @@ export class VendorImportService {
       await queryRunner.commitTransaction();
       this.logger.log(
         `Vendor import by ${userEmail}: ${result.created} created, ${result.updated} updated, ` +
-        `${vendorTypesCreated.length} vendor type(s) created`,
+        `${vendorTypesCreated.length} vendor type(s) created, ` +
+        `${materialCategoriesCreated.length} material categor(ies) created`,
       );
       return result;
     } catch (err: any) {
@@ -242,6 +304,44 @@ export class VendorImportService {
     } finally {
       await queryRunner.release();
     }
+  }
+
+  // The sheet's contact columns (person, email, mobile) describe one contact;
+  // vendor_contacts is where contacts live, so it lands there as the primary
+  // row (the vendor's own columns stay as the mirrored copy). Only the fields
+  // the sheet supplied are written, so a blank cell never wipes stored data.
+  private async savePrimaryContact(
+    queryRunner: QueryRunner,
+    vendor: Vendor,
+    fields: { contactDetails?: string; email?: string; mobileNumber?: string },
+    userEmail: string,
+  ): Promise<void> {
+    const current = await queryRunner.manager.findOne(VendorContact, {
+      where: { vendorId: vendor.id, organizationId: vendor.organizationId, isPrimary: true, isDeleted: false },
+    });
+    if (current) {
+      if (fields.contactDetails) current.contactPerson = fields.contactDetails;
+      if (fields.email) current.email = fields.email;
+      if (fields.mobileNumber) current.mobileNumber = fields.mobileNumber;
+      current.updatedBy = userEmail;
+      await queryRunner.manager.save(VendorContact, current);
+      return;
+    }
+    await queryRunner.manager.save(VendorContact, queryRunner.manager.create(VendorContact, {
+      id: uuidv4(),
+      dguid: uuidv4(),
+      organizationId: vendor.organizationId,
+      vendorId: vendor.id,
+      // contactPerson is mandatory on the row; with only an email/mobile given,
+      // the vendor's own name stands in until a person is named.
+      contactPerson: fields.contactDetails || vendor.vendorName,
+      email: fields.email,
+      mobileNumber: fields.mobileNumber,
+      isPrimary: true,
+      isActive: true,
+      createdBy: userEmail,
+      updatedBy: userEmail,
+    } as Partial<VendorContact>));
   }
 
   private async defaultIndustryCategoryId(queryRunner: QueryRunner, organizationId: string): Promise<string | null> {
@@ -275,6 +375,7 @@ export class VendorImportService {
     const errors: VendorImportRowError[] = [];
     const seenKeys = new Map<string, number>();
     const newVendorTypeNames = new Map<string, string>(); // canon -> original-cased name to create
+    const newCategoryNames = new Map<string, string>();   // canon -> original-cased name to create
     const plan: PlannedRow[] = [];
 
     for (const r of raw) {
@@ -282,10 +383,26 @@ export class VendorImportService {
       if (!r.vendorName) rowErrors.push('Vendor Name is required');
       else if (r.vendorName.length > 255) rowErrors.push('Vendor Name exceeds 255 characters');
       if (!r.materialCategory) rowErrors.push('Material Category is required');
+      else if (r.materialCategory.length > 255) rowErrors.push('Material Category exceeds 255 characters');
 
-      const category = r.materialCategory ? categoryByName.get(canon(r.materialCategory)) : undefined;
-      if (r.materialCategory && !category) rowErrors.push(`Material Category "${r.materialCategory}" not found`);
-      else if (category && !category.isActive) rowErrors.push(`Material Category "${r.materialCategory}" is inactive`);
+      // A Material Category the org doesn't have yet is created during the
+      // import rather than rejected — only an existing-but-inactive one is
+      // still an error, since silently reusing something deliberately
+      // disabled would be surprising.
+      const categoryKey = canon(r.materialCategory);
+      const category = r.materialCategory ? categoryByName.get(categoryKey) : undefined;
+      if (category && !category.isActive) rowErrors.push(`Material Category "${r.materialCategory}" is inactive`);
+      if (r.materialCategory && !category && !newCategoryNames.has(categoryKey)) {
+        newCategoryNames.set(categoryKey, r.materialCategory);
+      }
+
+      // Email and mobile are optional, but must be well-formed when supplied.
+      if (r.email && (r.email.length > 255 || !EMAIL_REGEX.test(r.email))) {
+        rowErrors.push(`Email "${r.email}" is not a valid email address`);
+      }
+      if (r.mobile && !PHONE_REGEX.test(r.mobile)) {
+        rowErrors.push(`Mobile Number "${r.mobile}" is not valid (6–20 digits; may include + - ( ) . and spaces)`);
+      }
 
       // Blank Vendor Type falls back to the configured default; both paths
       // are matched case-/plural-insensitively against existing types, and a
@@ -305,7 +422,7 @@ export class VendorImportService {
         continue;
       }
 
-      const identityKey = `${canon(r.vendorName)}|${canon(typeNameRaw)}|${category!.id}`;
+      const identityKey = `${canon(r.vendorName)}|${canon(typeNameRaw)}|${categoryKey}`;
       const firstRow = seenKeys.get(identityKey);
       if (firstRow) {
         errors.push({
@@ -320,7 +437,10 @@ export class VendorImportService {
         row: r.row,
         vendorName: r.vendorName,
         contactDetails: r.contactDetails,
-        materialCategoryId: category!.id,
+        email: r.email ? r.email.toLowerCase() : undefined,
+        mobileNumber: r.mobile || undefined,
+        materialCategoryName: category?.name ?? r.materialCategory,
+        materialCategoryId: category?.id,
         vendorTypeName: typeNameRaw,
         vendorTypeId: existingType?.id,
       });
@@ -333,7 +453,11 @@ export class VendorImportService {
         totalErrors: errors.length,
       });
     }
-    return { plan, newVendorTypeNames: [...newVendorTypeNames.values()] };
+    return {
+      plan,
+      newVendorTypeNames: [...newVendorTypeNames.values()],
+      newCategoryNames: [...newCategoryNames.values()],
+    };
   }
 
   // ── File readers ─────────────────────────────────────────────────────
@@ -423,7 +547,7 @@ export class VendorImportService {
     if (!headerRow || missing.length) {
       throw new BadRequestException(
         'Header row not recognised. Expected columns: Vendor Code, Vendor Name, Vendor Type, ' +
-        'Material Category, Contact details.',
+        'Material Category, Contact details, Email, Mobile Number (Email and Mobile Number are optional).',
       );
     }
 
@@ -435,13 +559,16 @@ export class VendorImportService {
         (r as any)[field] = this.cellText(row.getCell(col).value);
       });
       // Fully blank rows (trailing formatting) are skipped, not errors.
-      if (r.code || r.vendorName || r.vendorType || r.materialCategory || r.contactDetails) rows.push(r);
+      if (r.code || r.vendorName || r.vendorType || r.materialCategory || r.contactDetails || r.email || r.mobile) rows.push(r);
     });
     return rows;
   }
 
   private emptyRow(row: number): RawImportRow {
-    return { row, code: '', vendorName: '', vendorType: '', materialCategory: '', contactDetails: '' };
+    return {
+      row, code: '', vendorName: '', vendorType: '', materialCategory: '',
+      contactDetails: '', email: '', mobile: '',
+    };
   }
 
   // Flattens every cell shape ExcelJS can return (plain, rich text, hyperlink,

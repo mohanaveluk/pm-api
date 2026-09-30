@@ -122,6 +122,8 @@ describe('VendorService', () => {
   let evaluationRepo: any;
   let documentRepo: any;
   let userRepo: any;
+  let contactRepo: any;
+  let materialCategoryRepo: any;
   let emailService: any;
   let usageValidation: VendorUsageValidationService;
   let dataSource: any;
@@ -170,6 +172,8 @@ describe('VendorService', () => {
     evaluationRepo = makeRepo();
     documentRepo = makeRepo();
     userRepo     = makeRepo();
+    contactRepo  = makeRepo();
+    materialCategoryRepo = makeRepo();
     emailService = { sendEmail: jest.fn(async () => true) };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -179,7 +183,7 @@ describe('VendorService', () => {
         VendorUsageValidationService,
         { provide: getRepositoryToken(Vendor),              useValue: vendorRepo },
         { provide: getRepositoryToken(VendorCodeCounter),   useValue: makeRepo() },
-        { provide: getRepositoryToken(VendorContact),       useValue: makeRepo() },
+        { provide: getRepositoryToken(VendorContact),       useValue: contactRepo },
         { provide: getRepositoryToken(VendorAddress),       useValue: makeRepo() },
         { provide: getRepositoryToken(VendorBankAccount),   useValue: bankRepo },
         { provide: getRepositoryToken(VendorCertification), useValue: makeRepo() },
@@ -192,7 +196,7 @@ describe('VendorService', () => {
         { provide: getRepositoryToken(VendorProjectExperience),   useValue: projectExperienceRepo },
         { provide: getRepositoryToken(IndustryCategory),    useValue: categoryRepo },
         { provide: getRepositoryToken(VendorType),          useValue: vendorTypeRepo },
-        { provide: getRepositoryToken(MaterialCategory),    useValue: makeRepo() },
+        { provide: getRepositoryToken(MaterialCategory),    useValue: materialCategoryRepo },
         { provide: getRepositoryToken(Material),            useValue: materialRepo },
         { provide: getRepositoryToken(User),                useValue: userRepo },
         { provide: DataSource,          useValue: dataSource },
@@ -342,6 +346,62 @@ describe('VendorService', () => {
   });
 
   // ══ Update ═════════════════════════════════════════════════════════════
+
+  describe('update — contacts', () => {
+    const contacts = [
+      { contactPerson: 'Asha', email: 'asha@v.example', mobileNumber: '+971 50 111 2222' },
+      { contactPerson: 'Ravi', designation: 'Sales', landlineNumber: '+971 4 123 4567', isPrimary: true },
+    ];
+
+    it('mirrors the primary contact onto the vendor and replaces the contact rows', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor());
+      jest.spyOn(service, 'findOne').mockResolvedValue({} as any);
+
+      await service.update(VENDOR_ID, { contacts } as any, ORG_A, USER, 'Manager');
+
+      expect(queryRunner.manager.save).toHaveBeenCalledWith(
+        Vendor,
+        expect.objectContaining({
+          primaryContactPerson: 'Ravi', designation: 'Sales',
+          landlineNumber: '+971 4 123 4567', email: null,
+        }),
+      );
+    });
+
+    it('rejects more than one primary contact', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor());
+      await expect(
+        service.update(VENDOR_ID, {
+          contacts: [{ contactPerson: 'A', isPrimary: true }, { contactPerson: 'B', isPrimary: true }],
+        } as any, ORG_A, USER, 'Manager'),
+      ).rejects.toThrow(UnprocessableEntityException);
+    });
+  });
+
+  describe('findOne — primary contact from vendor_contacts', () => {
+    it('sources the person-level fields from the primary contact row', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor({ primaryContactPerson: 'Stale', email: 'stale@v.example' }));
+      contactRepo.find.mockResolvedValue([
+        { id: 'c1', contactPerson: 'Asha', isPrimary: false },
+        { id: 'c2', contactPerson: 'Ravi', email: 'ravi@v.example', mobileNumber: '+971 50 1', isPrimary: true },
+      ]);
+
+      const result = await service.findOne(VENDOR_ID, ORG_A, USER, 'Manager');
+
+      expect(result).toMatchObject({
+        primaryContactPerson: 'Ravi', email: 'ravi@v.example', mobileNumber: '+971 50 1',
+      });
+      expect(result.contacts).toHaveLength(2);
+    });
+
+    it('keeps the vendor columns when there are no contact rows', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor({ primaryContactPerson: 'Legacy' }));
+
+      const result = await service.findOne(VENDOR_ID, ORG_A, USER, 'Manager');
+
+      expect(result.primaryContactPerson).toBe('Legacy');
+    });
+  });
 
   describe('update', () => {
     it('updates an existing vendor and stamps updatedBy', async () => {
@@ -1738,6 +1798,32 @@ describe('VendorService', () => {
 
       const clauses = qb.andWhere.mock.calls.map((c: any[]) => c[0]);
       expect(clauses).not.toContain('v.createdBy = :createdBy');
+    });
+  });
+
+  describe('findOne — product category names', () => {
+    it('returns Material Category names in place of the stored ids', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor({ productCategories: ['cat-1', 'cat-2'] }));
+      materialCategoryRepo.find.mockResolvedValue([
+        { id: 'cat-1', name: 'Raw Material' }, { id: 'cat-2', name: 'Consumable' },
+      ]);
+
+      const result = await service.findOne(VENDOR_ID, ORG_A, USER, 'Manager');
+
+      expect(result.productCategories).toEqual(['Raw Material', 'Consumable']);
+    });
+
+    it('keeps a value that matches no category, and skips the lookup when there are none', async () => {
+      vendorRepo.findOne.mockResolvedValue(existingVendor({ productCategories: ['cat-1', 'Legacy Name'] }));
+      materialCategoryRepo.find.mockResolvedValue([{ id: 'cat-1', name: 'Raw Material' }]);
+      await expect(service.findOne(VENDOR_ID, ORG_A, USER, 'Manager'))
+        .resolves.toMatchObject({ productCategories: ['Raw Material', 'Legacy Name'] });
+
+      materialCategoryRepo.find.mockClear();
+      vendorRepo.findOne.mockResolvedValue(existingVendor({ productCategories: undefined }));
+      await expect(service.findOne(VENDOR_ID, ORG_A, USER, 'Manager'))
+        .resolves.toMatchObject({ productCategories: [] });
+      expect(materialCategoryRepo.find).not.toHaveBeenCalled();
     });
   });
 
