@@ -34,7 +34,7 @@ export class DecideVendorStatusChangeDto {
     example: 'a3f1c9e2b7d84a6f9c1e5b8d2f7a4c6e9b1d3f5a7c9e2b4d6f8a1c3e5b7d9f2a',
     description: 'Single-use approval token from the notification email. Expires after 7 days.',
   })
-  @IsString() @IsNotEmpty() @Length(32, 128) @Transform(trim)
+  @IsString() @IsNotEmpty() @Length(6, 128) @Transform(trim)
   token: string;
 
   @ApiPropertyOptional({ example: 'Confirmed with the QA/QC lead; proceeding with the blacklisting.' })

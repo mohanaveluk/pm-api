@@ -96,6 +96,73 @@ describe('VendorImportService', () => {
     expect(saved.filter((s) => s.name === 'Distributor')).toHaveLength(1);
   });
 
+  it('creates a new Material Category inside the same transaction and uses its id on the vendor', async () => {
+    const csvNewCat = 'Vendor Name,Vendor Type,Material Category\nNewCo,Consultant,Electricals\n';
+    const result = await service.import(file('v.csv', csvNewCat), ORG, 'u');
+    expect(result.materialCategoriesCreated).toEqual(['Electricals']);
+    expect(masterCodeCalls).toContain(MasterSequenceKey.MATERIAL_CATEGORY);
+    const createdCategory = saved.find((s) => s.name === 'Electricals');
+    expect(createdCategory).toMatchObject({ code: '0001', isActive: true, organizationId: ORG });
+    const vendor = saved.find((s) => s.vendorName === 'NewCo');
+    expect(vendor.productCategories).toEqual([createdCategory.id]);
+  });
+
+  it('creates a new Material Category and a new Vendor Type together, once each', async () => {
+    const csvNew = 'Vendor Name,Vendor Type,Material Category\n' +
+      'A Co,Distributor,Electricals\nB Co,distributors,electricals\n';
+    const result = await service.import(file('v.csv', csvNew), ORG, 'u');
+    expect(result).toMatchObject({ created: 2, vendorTypesCreated: ['Distributor'], materialCategoriesCreated: ['Electricals'] });
+    expect(saved.filter((s) => s.name === 'Electricals')).toHaveLength(1);
+    expect(saved.filter((s) => s.name === 'Distributor')).toHaveLength(1);
+  });
+
+  it('stores an optional email and mobile number on the vendor and its primary contact', async () => {
+    const csvContact = 'Vendor Name,Vendor Type,Material Category,Contact details,Email,Mobile Number\n' +
+      'NewCo,Consultant,Raw Material,Atul Sharma,Atul@Newco.Example,+971 50 123 4567\n';
+    await service.import(file('v.csv', csvContact), ORG, 'u');
+    expect(saved.find((s) => s.vendorName === 'NewCo')).toMatchObject({
+      email: 'atul@newco.example', mobileNumber: '+971 50 123 4567',
+    });
+    expect(saved.find((s) => s.contactPerson === 'Atul Sharma')).toMatchObject({
+      email: 'atul@newco.example', mobileNumber: '+971 50 123 4567', isPrimary: true,
+    });
+  });
+
+  it('leaves email and mobile untouched when the sheet does not supply them', async () => {
+    existing = [{
+      id: 'v1', code: 'CON000009', vendorName: 'abc consultant', vendorTypeId: 'vt-2',
+      productCategories: ['cat-1'], email: 'keep@v.example', mobileNumber: '+971 4 111 2222',
+    }];
+    await service.import(file('v.csv', csv), ORG, 'u');
+    expect(saved.find((s) => s.id === 'v1')).toMatchObject({
+      email: 'keep@v.example', mobileNumber: '+971 4 111 2222',
+    });
+  });
+
+  it('updates email and mobile on an existing vendor when the sheet supplies them', async () => {
+    existing = [{
+      id: 'v1', code: 'CON000009', vendorName: 'abc consultant', vendorTypeId: 'vt-2',
+      productCategories: ['cat-1'], email: 'old@v.example',
+    }];
+    const csvUpdate = 'Vendor Name,Vendor Type,Material Category,Email,Mobile\n' +
+      'ABC Consultant,Consultant,Raw Material,new@v.example,+971 50 999 8888\n';
+    const result = await service.import(file('v.csv', csvUpdate), ORG, 'u');
+    expect(result.updated).toBe(1);
+    expect(saved.find((s) => s.id === 'v1')).toMatchObject({
+      email: 'new@v.example', mobileNumber: '+971 50 999 8888',
+    });
+  });
+
+  it('rejects a malformed email or mobile number, writing nothing', async () => {
+    const bad = 'Vendor Name,Vendor Type,Material Category,Email,Mobile Number\n' +
+      'A Co,Consultant,Raw Material,not-an-email,+971 50 123 4567\n' +
+      'B Co,Consultant,Raw Material,b@v.example,abc\n';
+    await expect(service.import(file('v.csv', bad), ORG, 'u')).rejects.toMatchObject({
+      response: { totalErrors: 2 },
+    });
+    expect(qr.startTransaction).not.toHaveBeenCalled();
+  });
+
   it('imports JSON (array and wrapped)', async () => {
     const rows = [{ 'Vendor Name': 'ABC Consultant', 'Vendor Type': 'Consultant', 'Material Category': 'Raw Material' }];
     await expect(service.import(file('v.json', JSON.stringify(rows)), ORG, 'u')).resolves.toMatchObject({ created: 1 });

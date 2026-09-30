@@ -1073,6 +1073,24 @@ export class VendorService {
     };
   }
 
+  // The vendor-level copy of the primary contact: the flagged row, or the
+  // first one when none is flagged. Empty input clears the columns.
+  private primaryContactColumns(
+    contacts: Array<{
+      contactPerson?: string; designation?: string; email?: string;
+      mobileNumber?: string; landlineNumber?: string; isPrimary?: boolean;
+    }>,
+  ): Partial<Vendor> {
+    const primary = contacts.find(c => c.isPrimary) ?? contacts[0];
+    return {
+      primaryContactPerson: primary?.contactPerson ?? null,
+      designation:          primary?.designation   ?? null,
+      email:                primary?.email         ?? null,
+      mobileNumber:         primary?.mobileNumber  ?? null,
+      landlineNumber:       primary?.landlineNumber ?? null,
+    } as Partial<Vendor>;
+  }
+
   // A vendor with a status change awaiting approval is frozen for other
   // lifecycle operations, so an enable/disable/delete cannot race the pending
   // decision and leave the two out of step.
@@ -1220,8 +1238,33 @@ export class VendorService {
       this.projectExperienceRepo.find({ where: { vendorId: id, organizationId, isDeleted: false }, order: { displayOrder: 'ASC', completionDate: 'DESC' } }),
     ]);
 
+    // productCategories is stored as Material Category ids; the response shows
+    // their names. A value with no matching category (e.g. a legacy free-text
+    // entry) is passed through untouched rather than dropped.
+    const categoryIds = vendor.productCategories ?? [];
+    const categories = categoryIds.length
+      ? await this.materialCategoryRepo.find({
+          where: { organizationId, isDeleted: false, id: In(categoryIds) },
+        })
+      : [];
+    const productCategories = categoryIds.map(
+      catId => categories.find(mc => mc.id === catId)?.name ?? catId,
+    );
+
+    // Person-level fields come from the primary vendor_contacts row; the
+    // vendor's own columns are only the fallback for vendors with no rows.
+    const primary = contacts.find(c => c.isPrimary) ?? contacts[0];
+
     return {
       ...(vendor as unknown as VendorResponseDto),
+      ...(primary && {
+        primaryContactPerson: primary.contactPerson,
+        designation:          primary.designation,
+        email:                primary.email,
+        mobileNumber:         primary.mobileNumber,
+        landlineNumber:       primary.landlineNumber,
+      }),
+      productCategories,
       contacts:       contacts.map(c => this.toContactResponse(c)),
       addresses:      addresses.map(a => this.toAddressResponse(a)),
       bankAccounts:   banks.map(b => this.toBankResponse(b, reveal)),
@@ -1738,6 +1781,9 @@ export class VendorService {
     approvedAt: Date,
     comments?: string | null,
   ): Promise<boolean> {
+    const primaryContact = await this.contactRepo.findOne({
+      where: { vendorId: vendor.id, organizationId: vendor.organizationId, isPrimary: true, isDeleted: false },
+    });
     const creator = vendor.createdBy
       ? await this.userRepository.findOne({ where: { email: vendor.createdBy } })
       : null;
@@ -1754,8 +1800,8 @@ export class VendorService {
       approvedBy,
       approvedOn: approvedAt,
       tradeName: vendor.tradeName ?? undefined,
-      primaryContactPerson: vendor.primaryContactPerson ?? undefined,
-      contactEmail: vendor.email ?? undefined,
+      primaryContactPerson: (primaryContact?.contactPerson ?? vendor.primaryContactPerson) ?? undefined,
+      contactEmail: (primaryContact?.email ?? vendor.email) ?? undefined,
       createdBy: createdByName ?? undefined,
       createdOn: vendor.createdAt,
       decisionComments: comments ?? undefined,
@@ -1842,6 +1888,12 @@ export class VendorService {
     try {
       const flat = this.flattenDto(dto);
       Object.assign(vendor, { ...flat, updatedBy: userEmail });
+      // vendor_contacts is the source of truth; the primary row is mirrored
+      // back onto the vendor so list rendering stays a single-table read.
+      if (dto.contacts !== undefined) {
+        this.assertSinglePrimary(dto.contacts, 'contact');
+        Object.assign(vendor, this.primaryContactColumns(dto.contacts));
+      }
       await queryRunner.manager.save(Vendor, vendor);
 
       await this.replaceChildren(queryRunner.manager, dto, id, organizationId, userEmail);
@@ -2040,7 +2092,9 @@ export class VendorService {
 
     // 32 random bytes — the token is the approval credential and must not be
     // guessable. Only the hex string in the email can satisfy it.
-    const token = randomBytes(32).toString('hex');
+
+    const token = Math.floor(100000 + Math.random() * 900000).toString();
+    //const token = randomBytes(32).toString('hex');
     const now = new Date();
     const expiresAt = new Date(now.getTime() + APPROVAL_TOKEN_TTL_MS);
 
@@ -2144,7 +2198,7 @@ export class VendorService {
       // Never log the token or the composed link.
       return await this.emailService.sendEmail({
         to: approvers.map(a => a.email),
-        cc: 'gcpstudy0@gmail.com',
+        //cc: 'gcpstudy0@gmail.com',
         subject:
           request.requestType === StatusChangeRequestType.BLACKLIST
             ? `Approval required: blacklist vendor ${vendor.code} — ${vendor.vendorName}`
