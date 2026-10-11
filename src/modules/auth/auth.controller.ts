@@ -433,6 +433,37 @@ export class AuthController {
     });
   }
 
+  @Post(':uguid/reset-password')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SuperAdmin', 'OrganizationAdmin')
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: "Reset a user's password (admin)",
+    description:
+      'For a user who has forgotten their password and asked an administrator for help. ' +
+      "Sets the password to the default temporary password, ends the user's existing " +
+      "sessions and emails them. Only active, verified users in the admin's own " +
+      'organization (any, for SuperAdmin) can be reset, and never the caller themself.',
+  })
+  @ApiResponse({ status: 200, description: 'Password reset. emailSent is false if the notification failed.' })
+  @ApiResponse({ status: 400, description: 'User is inactive/unverified, or is the caller' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Not authorised to reset a user outside your own organization' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async adminResetPassword(
+    @Param('uguid') uguid: string,
+    @Request() req,
+    @Req() expReq: ExpRequest,
+  ) {
+    const name = [req.user.firstName, req.user.lastName].filter(Boolean).join(' ').trim() || 'An administrator';
+    return this.authService.adminResetPassword(
+      uguid,
+      { organizationId: req.user.organizationId, role: req.user.role, userId: req.user.userId, name },
+      `${expReq.get('origin')}`,
+    );
+  }
+
   @Patch(':uguid/status')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('SuperAdmin', 'OrganizationAdmin')

@@ -163,6 +163,83 @@ describe('VendorImportService', () => {
     expect(qr.startTransaction).not.toHaveBeenCalled();
   });
 
+  describe('existing vendors — update, skip and preview', () => {
+    const abcExisting = () => ({
+      id: 'v1', code: 'CON000009', vendorName: 'abc consultant', vendorTypeId: 'vt-2',
+      productCategories: ['cat-1'], primaryContactPerson: 'Old Contact', email: 'old@v.example',
+    });
+
+    it('updates existing vendors by default and reports skipped = 0', async () => {
+      existing = [abcExisting()];
+      const result = await service.import(file('v.csv', csv), ORG, 'u');
+      expect(result).toMatchObject({ total: 2, created: 1, updated: 1, skipped: 0 });
+      expect(saved.find((s) => s.id === 'v1')).toMatchObject({ primaryContactPerson: 'Atul Sharma' });
+    });
+
+    it('with updateExisting=false leaves existing vendors untouched, still adds new ones, and counts skipped', async () => {
+      existing = [abcExisting()];
+
+      const result = await service.import(file('v.csv', csv), ORG, 'u', { updateExisting: false });
+
+      expect(result).toMatchObject({ total: 2, created: 1, updated: 0, skipped: 1 });
+      expect(saved.find((s) => s.id === 'v1')).toBeUndefined();
+      expect(saved.find((s) => s.vendorName === 'Siera Service')).toBeDefined();
+      expect(result.items.map((i) => [i.row, i.action])).toEqual([[2, 'skipped'], [3, 'created']]);
+    });
+
+    it('with updateExisting=false and nothing new, writes no vendors at all', async () => {
+      existing = [
+        abcExisting(),
+        { id: 'v2', code: 'SUP000002', vendorName: 'siera service', vendorTypeId: 'vt-1', productCategories: ['cat-1'] },
+      ];
+
+      const result = await service.import(file('v.csv', csv), ORG, 'u', { updateExisting: false });
+
+      expect(result).toMatchObject({ created: 0, updated: 0, skipped: 2 });
+      expect(saved.filter((s) => s.vendorName)).toHaveLength(0);
+    });
+
+    it('still creates a new vendor type / category for a new row while skipping an existing one', async () => {
+      existing = [abcExisting()];
+      const mixed = 'Vendor Name,Vendor Type,Material Category\n' +
+        'ABC Consultant,Consultant,Raw Material\n' +
+        'NewCo,Distributor,Electricals\n';
+
+      const result = await service.import(file('v.csv', mixed), ORG, 'u', { updateExisting: false });
+
+      expect(result).toMatchObject({
+        created: 1, skipped: 1, vendorTypesCreated: ['Distributor'], materialCategoriesCreated: ['Electricals'],
+      });
+    });
+
+    it('preview reports new vs existing without writing anything', async () => {
+      existing = [abcExisting()];
+
+      const preview = await service.preview(file('v.csv', csv), ORG);
+
+      expect(preview).toEqual({
+        total: 2, toCreate: 1, toUpdate: 1,
+        existing: [{ row: 2, name: 'ABC Consultant', code: 'CON000009' }],
+      });
+      expect(qr.startTransaction).not.toHaveBeenCalled();
+      expect(saved).toHaveLength(0);
+    });
+
+    it('preview treats a row with a brand-new vendor type or category as new', async () => {
+      existing = [abcExisting()];
+      const newType = 'Vendor Name,Vendor Type,Material Category\nABC Consultant,Distributor,Raw Material\n';
+
+      const preview = await service.preview(file('v.csv', newType), ORG);
+
+      expect(preview).toMatchObject({ total: 1, toCreate: 1, toUpdate: 0, existing: [] });
+    });
+
+    it('preview applies the same validation as import', async () => {
+      const bad = csv + '0008,,,,\n';
+      await expect(service.preview(file('v.csv', bad), ORG)).rejects.toThrow(UnprocessableEntityException);
+    });
+  });
+
   it('imports JSON (array and wrapped)', async () => {
     const rows = [{ 'Vendor Name': 'ABC Consultant', 'Vendor Type': 'Consultant', 'Material Category': 'Raw Material' }];
     await expect(service.import(file('v.json', JSON.stringify(rows)), ORG, 'u')).resolves.toMatchObject({ created: 1 });

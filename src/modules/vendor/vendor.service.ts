@@ -558,6 +558,7 @@ export class VendorService {
       code:                 v.code,
       vendorName:           v.vendorName,
       tradeName:            v.tradeName,
+      vendorAccountGroup:   v.vendorAccountGroup,
       vendorTypeId:         v.vendorTypeId,
       vendorTypeName:       v.vendorType?.name,
       vendorStatus:         v.vendorStatus,

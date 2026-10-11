@@ -138,6 +138,77 @@ describe('MaterialImportService', () => {
     await expect(service.import(big, ORG, 'u')).rejects.toThrow(/5 MB/);
   });
 
+  describe('existing materials — update, skip and preview', () => {
+    const existingHdmi = () => ({
+      id: 'm1', code: 'RAW000009', shortDescription: 'hdmi cable',
+      longDescription: 'Old spec', isPurchaseOrderIssued: false,
+    });
+
+    it('updates existing materials by default and reports skipped = 0', async () => {
+      existing = [existingHdmi()];
+      const result = await service.import(file('m.csv', csv), ORG, 'u');
+      expect(result).toMatchObject({ total: 2, created: 1, updated: 1, skipped: 0 });
+      expect(saved.find((s) => s.id === 'm1')).toMatchObject({ longDescription: 'HDMI Cable to VGA' });
+    });
+
+    it('with updateExisting=false leaves existing materials untouched, still adds new ones, and counts skipped', async () => {
+      existing = [existingHdmi()];
+
+      const result = await service.import(file('m.csv', csv), ORG, 'u', { updateExisting: false });
+
+      expect(result).toMatchObject({ total: 2, created: 1, updated: 0, skipped: 1 });
+      expect(saved.find((s) => s.id === 'm1')).toBeUndefined();
+      expect(saved.find((s) => s.shortDescription === 'VGA Cable')).toBeDefined();
+      expect(result.items.map((i) => [i.row, i.action])).toEqual([[2, 'skipped'], [3, 'created']]);
+    });
+
+    it('with updateExisting=false and nothing new, writes no materials at all', async () => {
+      existing = [
+        existingHdmi(),
+        { id: 'm2', code: 'RAW000010', shortDescription: 'vga cable', isPurchaseOrderIssued: false },
+      ];
+
+      const result = await service.import(file('m.csv', csv), ORG, 'u', { updateExisting: false });
+
+      expect(result).toMatchObject({ created: 0, updated: 0, skipped: 2 });
+      expect(saved).toHaveLength(0);
+    });
+
+    it('does not create master data that only a skipped row referenced', async () => {
+      existing = [existingHdmi()];
+      const newCatCsv = 'Short Description,UOM,Material Category,Material Group\n' +
+        'HDMI Cable,Nos,Brand New Category,Brand New Group\n';
+
+      const result = await service.import(file('m.csv', newCatCsv), ORG, 'u', { updateExisting: false });
+
+      expect(result).toMatchObject({ created: 0, updated: 0, skipped: 1 });
+      expect(saved.find((s) => s.name === 'Brand New Category')).toBeUndefined();
+    });
+
+    it('preview reports new vs existing without writing anything', async () => {
+      existing = [existingHdmi()];
+
+      const preview = await service.preview(file('m.csv', csv), ORG);
+
+      expect(preview).toEqual({
+        total: 2, toCreate: 1, toUpdate: 1,
+        existing: [{ row: 2, name: 'HDMI Cable', code: 'RAW000009' }],
+      });
+      expect(qr.startTransaction).not.toHaveBeenCalled();
+      expect(saved).toHaveLength(0);
+    });
+
+    it('preview reports toUpdate = 0 when every row is new', async () => {
+      const preview = await service.preview(file('m.csv', csv), ORG);
+      expect(preview).toMatchObject({ total: 2, toCreate: 2, toUpdate: 0, existing: [] });
+    });
+
+    it('preview applies the same validation as import', async () => {
+      const bad = csv + '4,,,,,\n';
+      await expect(service.preview(file('m.csv', bad), ORG)).rejects.toThrow(UnprocessableEntityException);
+    });
+  });
+
   describe('auto-creating missing Category / Group / UOM', () => {
     it('creates a Category, then a Group under its new id, then a UOM, and uses all three ids on the material', async () => {
       const masterCodeService = { generateCode: jest.fn(async () => '0001') };

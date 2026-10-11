@@ -7,6 +7,7 @@ import {
 import { Transform, Type } from 'class-transformer';
 import { VendorProjectExperienceDto } from './vendor-project-experience.dto';
 
+import { VendorAccountGroup }   from '../enums/vendor-account-group.enum';
 import { VendorClassification } from '../enums/vendor-classification.enum';
 import { RiskCategory }         from '../enums/risk-category.enum';
 import { ReviewCycle }          from '../enums/review-cycle.enum';
@@ -26,6 +27,10 @@ const trim = ({ value }) => (typeof value === 'string' ? value.trim() : value);
 const PHONE_REGEX = /^\+?[0-9\s\-().]{6,20}$/;
 const PHONE_MESSAGE =
   'must be a valid international phone number (digits, optional leading +, spaces, hyphens, parentheses)';
+
+// A contact's mobile is stored as "<dial code> <number>", so the code is part
+// of the value: the leading + is what proves one was chosen.
+const CONTACT_MOBILE_REGEX = /^\+[0-9\s\-().]{6,20}$/;
 
 // Any public TLD is accepted — .com, .ae, .co.in, .co.uk all pass.
 const URL_OPTIONS = { require_protocol: true, require_tld: true, protocols: ['http', 'https'] };
@@ -92,13 +97,13 @@ export class VendorContactDto {
   @IsOptional() @IsString() @Length(1, 100) @Transform(trim)
   department?: string;
 
-  @ApiPropertyOptional({ example: 'sales@vendor.example' })
-  @IsOptional() @IsEmail() @Transform(trim)
-  email?: string;
+  @ApiProperty({ example: 'sales@vendor.example' })
+  @IsNotEmpty() @IsEmail() @Transform(trim)
+  email: string;
 
-  @ApiPropertyOptional({ example: '+971 50 123 4567' })
-  @IsOptional() @IsString() @Matches(PHONE_REGEX, { message: `mobileNumber ${PHONE_MESSAGE}` }) @Transform(trim)
-  mobileNumber?: string;
+  @ApiProperty({ example: '+971 50 123 4567' })
+  @IsNotEmpty() @IsString() @Matches(CONTACT_MOBILE_REGEX, { message: `mobileNumber must start with the country code (e.g. +971 50 123 4567)` }) @Transform(trim)
+  mobileNumber: string;
 
   @ApiPropertyOptional({ example: '+971 4 123 4567' })
   @IsOptional() @IsString() @Matches(PHONE_REGEX, { message: `landlineNumber ${PHONE_MESSAGE}` }) @Transform(trim)
@@ -572,6 +577,10 @@ export class CreateVendorDto {
   @ApiPropertyOptional({ example: 'ABC Fabricators', description: 'Operating/brand name if different from the legal name' })
   @IsOptional() @IsString() @Length(1, 255) @Transform(trim)
   tradeName?: string;
+
+  @ApiPropertyOptional({ enum: VendorAccountGroup, example: VendorAccountGroup.DOMESTIC })
+  @IsOptional() @IsEnum(VendorAccountGroup)
+  vendorAccountGroup?: VendorAccountGroup;
 
   @ApiPropertyOptional({
     example: 'uuid-of-parent-vendor',
