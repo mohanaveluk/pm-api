@@ -78,7 +78,27 @@ export interface VendorImportResult {
   updated: number;
   vendorTypesCreated: string[];
   materialCategoriesCreated: string[];
-  items: { row: number; name: string; code: string; action: 'created' | 'updated' }[];
+  /** Rows matching an existing vendor that were left untouched (updateExisting=false). */
+  skipped: number;
+  items: { row: number; name: string; code: string; action: 'created' | 'updated' | 'skipped' }[];
+}
+
+export interface VendorImportOptions {
+  /**
+   * What to do with rows that match a vendor already in the table. true (the
+   * default, and the behaviour before this option existed) updates them; false
+   * leaves them untouched and counts them as skipped. New vendors are always added.
+   */
+  updateExisting?: boolean;
+}
+
+/** Read-only summary of what an import would do — nothing is written. */
+export interface VendorImportPreview {
+  total: number;
+  toCreate: number;
+  toUpdate: number;
+  /** The rows that match an existing vendor (capped; see toUpdate for the full count). */
+  existing: { row: number; name: string; code: string }[];
 }
 
 const norm = (v: string) => v.trim().toLowerCase();
@@ -105,6 +125,18 @@ function canon(v: string): string {
   if (!words.length) return '';
   words[words.length - 1] = singularizeWord(words[words.length - 1]);
   return words.join(' ');
+}
+
+// A row matches an existing vendor on name + vendor type + material category
+// together. A row whose type or category is not resolved yet (it is about to be
+// created) cannot match anything.
+function matchExisting(vendors: Vendor[], p: PlannedRow): Vendor | undefined {
+  if (!p.vendorTypeId || !p.materialCategoryId) return undefined;
+  return vendors.find(v =>
+    canon(v.vendorName) === canon(p.vendorName) &&
+    v.vendorTypeId === p.vendorTypeId &&
+    (v.productCategories ?? [])[0] === p.materialCategoryId,
+  );
 }
 
 interface PlannedRow {
@@ -140,19 +172,10 @@ export class VendorImportService {
     file: Express.Multer.File,
     organizationId: string,
     userEmail: string,
+    options: VendorImportOptions = {},
   ): Promise<VendorImportResult> {
-    if (!file?.buffer?.length) throw new BadRequestException('No file provided, or the file is empty');
-    if (file.size > VENDOR_IMPORT_MAX_BYTES) {
-      throw new BadRequestException('File too large. The maximum size is 5 MB.');
-    }
-
-    const raw = await this.parse(file);
-    if (!raw.length) throw new BadRequestException('The file contains no vendor rows');
-    if (raw.length > MAX_ROWS) {
-      throw new BadRequestException(`The file has ${raw.length} rows; the maximum per import is ${MAX_ROWS}`);
-    }
-
-    const { plan, newVendorTypeNames, newCategoryNames } = await this.validate(raw, organizationId);
+    const { plan, newVendorTypeNames, newCategoryNames } = await this.readPlan(file, organizationId);
+    const updateExisting = options.updateExisting !== false;
 
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -232,17 +255,20 @@ export class VendorImportService {
       });
 
       const result: VendorImportResult = {
-        total: plan.length, created: 0, updated: 0, vendorTypesCreated, materialCategoriesCreated, items: [],
+        total: plan.length, created: 0, updated: 0, skipped: 0,
+        vendorTypesCreated, materialCategoriesCreated, items: [],
       };
 
       for (const p of plan) {
-        const existing = existingVendors.find(v =>
-          canon(v.vendorName) === canon(p.vendorName) &&
-          v.vendorTypeId === p.vendorTypeId &&
-          (v.productCategories ?? [])[0] === p.materialCategoryId,
-        );
+        const existing = matchExisting(existingVendors, p);
 
-        if (existing) {
+        if (existing && !updateExisting) {
+          // The user declined to update existing vendors: leave the row exactly
+          // as stored. (A skipped row never needed a new type or category — a
+          // match implies both already exist — so nothing extra is created for it.)
+          result.skipped++;
+          result.items.push({ row: p.row, name: p.vendorName, code: existing.code, action: 'skipped' });
+        } else if (existing) {
           existing.vendorTypeId = p.vendorTypeId!;
           existing.productCategories = [p.materialCategoryId!];
           // Optional columns only overwrite when the sheet actually supplies them.
@@ -288,6 +314,7 @@ export class VendorImportService {
       await queryRunner.commitTransaction();
       this.logger.log(
         `Vendor import by ${userEmail}: ${result.created} created, ${result.updated} updated, ` +
+        `${result.skipped} skipped, ` +
         `${vendorTypesCreated.length} vendor type(s) created, ` +
         `${materialCategoriesCreated.length} material categor(ies) created`,
       );
@@ -350,6 +377,43 @@ export class VendorImportService {
       order: { displayOrder: 'ASC' },
     });
     return category?.id ?? null;
+  }
+
+  // Dry run: reads and fully validates the file exactly as import() would, and
+  // reports how many rows are new vs. match an existing vendor — without
+  // writing anything (vendor types and categories are only ever created inside
+  // import()'s transaction). Lets the caller ask the user before existing
+  // vendors are touched.
+  async preview(file: Express.Multer.File, organizationId: string): Promise<VendorImportPreview> {
+    const { plan, existingVendors } = await this.readPlan(file, organizationId);
+    const matches = plan
+      .map(p => ({ p, vendor: matchExisting(existingVendors, p) }))
+      .filter((m): m is { p: PlannedRow; vendor: Vendor } => !!m.vendor);
+
+    return {
+      total: plan.length,
+      toCreate: plan.length - matches.length,
+      toUpdate: matches.length,
+      existing: matches
+        .slice(0, MAX_REPORTED_ERRORS)
+        .map(m => ({ row: m.p.row, name: m.p.vendorName, code: m.vendor.code })),
+    };
+  }
+
+  // Shared by import() and preview(): size/shape checks, parse, validate.
+  private async readPlan(file: Express.Multer.File, organizationId: string) {
+    if (!file?.buffer?.length) throw new BadRequestException('No file provided, or the file is empty');
+    if (file.size > VENDOR_IMPORT_MAX_BYTES) {
+      throw new BadRequestException('File too large. The maximum size is 5 MB.');
+    }
+
+    const raw = await this.parse(file);
+    if (!raw.length) throw new BadRequestException('The file contains no vendor rows');
+    if (raw.length > MAX_ROWS) {
+      throw new BadRequestException(`The file has ${raw.length} rows; the maximum per import is ${MAX_ROWS}`);
+    }
+
+    return this.validate(raw, organizationId);
   }
 
   // ── Validation & id resolution ───────────────────────────────────────
@@ -455,6 +519,7 @@ export class VendorImportService {
     }
     return {
       plan,
+      existingVendors: existing,
       newVendorTypeNames: [...newVendorTypeNames.values()],
       newCategoryNames: [...newCategoryNames.values()],
     };

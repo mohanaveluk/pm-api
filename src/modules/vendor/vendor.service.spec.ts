@@ -2407,6 +2407,44 @@ describe('CreateVendorDto validation', () => {
     expect(await errorsFor({ vendorTypeId: 'FABRICATOR' })).toContain('vendorTypeId');
   });
 
+  it('accepts Domestic / Import / One-time as the vendor account group, and rejects anything else', async () => {
+    for (const group of ['DOMESTIC', 'IMPORT', 'ONE_TIME']) {
+      expect(await errorsFor({ vendorAccountGroup: group })).not.toContain('vendorAccountGroup');
+    }
+    expect(await errorsFor({ vendorAccountGroup: 'LOCAL' })).toContain('vendorAccountGroup');
+    expect(await errorsFor({})).not.toContain('vendorAccountGroup');
+  });
+
+  it('requires an email and a mobile number on every contact', async () => {
+    const contactErrors = async (contact: Record<string, any>) => {
+      const dto = plainToInstance(CreateVendorDto, { ...base, contacts: [{ contactPerson: 'Asha', ...contact }] });
+      const top = await validate(dto, { whitelist: true });
+      const nested = top.flatMap(e => e.children ?? []).flatMap(c => c.children ?? []);
+      return nested.map(e => e.property);
+    };
+
+    expect(await contactErrors({ email: 'a@v.example', mobileNumber: '+971 50 123 4567' })).toEqual([]);
+    expect(await contactErrors({ mobileNumber: '+971 50 123 4567' })).toContain('email');
+    expect(await contactErrors({ email: 'a@v.example' })).toContain('mobileNumber');
+    expect(await contactErrors({ email: '  ', mobileNumber: '  ' })).toEqual(
+      expect.arrayContaining(['email', 'mobileNumber']),
+    );
+  });
+
+  it('requires a contact mobile number to carry its country code', async () => {
+    const mobileErrors = async (mobileNumber: string) => {
+      const dto = plainToInstance(CreateVendorDto, {
+        ...base, contacts: [{ contactPerson: 'Asha', email: 'a@v.example', mobileNumber }],
+      });
+      const top = await validate(dto, { whitelist: true });
+      return top.flatMap(e => e.children ?? []).flatMap(c => c.children ?? []).map(e => e.property);
+    };
+
+    expect(await mobileErrors('+971 50 123 4567')).toEqual([]);
+    expect(await mobileErrors('50 123 4567')).toContain('mobileNumber');
+    expect(await mobileErrors('0501234567')).toContain('mobileNumber');
+  });
+
   it('rejects a malformed email', async () => {
     expect(await errorsFor({ email: 'not-an-email' })).toContain('email');
     expect(await errorsFor({ email: 'a@b' })).toContain('email');

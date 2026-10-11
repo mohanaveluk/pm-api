@@ -33,6 +33,11 @@ import { CustomLoggerService } from '../logger/custom-logger.service';
 import { CloudStorageService } from 'src/common/services/cloud-storage.service';
 import { PasswordResetToken } from './entity/password-reset-token.entity';
 import { buildOtpEmailHtml } from 'src/shared/email/templates/otc-email-templates';
+import { adminPasswordResetSubject, adminPasswordResetTemplate } from 'src/shared/email/templates/admin-password-reset-template';
+
+// The password every admin-initiated reset sets. It is deliberately a single,
+// known value: the user is told to change it on first sign-in.
+export const ADMIN_RESET_DEFAULT_PASSWORD = 'Welcome@123';
 
 
 
@@ -86,7 +91,8 @@ export class AuthService {
 
       const hashedPassword = await bcrypt.hash(registerDto.password, 10);
       const verificationCode = this.generateOTC();
-      const verificationCodeExpiry = new Date(Date.now() + 30 * 60 * 1000); // 15 minutes
+      //const verificationCodeExpiry = new Date(Date.now() + 30 * 60 * 1000); // 15 minutes
+      const verificationCodeExpiry = await this.dateService.addMinutesToCurrentDateTimeInUTC(15); // 15 minutes from now
       // Defaults to internal (1) unless the caller explicitly marks the
       // account external — an admin creating a vendor-side login.
       const isInternal = registerDto.is_internal === false ? 0 : 1;
@@ -851,6 +857,85 @@ export class AuthService {
         throw error;
       }
       throw new InternalServerErrorException('Failed to update user');
+    }
+  }
+
+  // Admin-initiated reset for a user who has forgotten their password. The
+  // password is set to ADMIN_RESET_DEFAULT_PASSWORD, the old hash is archived,
+  // every refresh token is revoked so any existing session ends, and the user
+  // is emailed. A mail failure does not undo the reset (the admin can re-send
+  // by resetting again), so it is reported via `emailSent` instead of thrown.
+  async adminResetPassword(
+    uguid: string,
+    requestingUser: { organizationId: string | null; role: string; userId: string; name: string },
+    domain: string,
+  ): Promise<{ message: string; emailSent: boolean }> {
+    try {
+      const user = await this.userRepository.findOne({ where: { uguid, is_deleted: false } });
+      if (!user) {
+        throw new NotFoundException(`User with ID ${uguid} not found`);
+      }
+
+      if (requestingUser.role !== 'SuperAdmin' && requestingUser.organizationId !== user.organizationId) {
+        throw new ForbiddenException('Access denied to this organization');
+      }
+      if (user.id === requestingUser.userId) {
+        throw new BadRequestException('Use Change Password to update your own password');
+      }
+      if (!user.is_active || !user.is_email_verified) {
+        throw new BadRequestException('Only active, verified users can have their password reset');
+      }
+
+      await this.passwordArchiveRepository.save(
+        this.passwordArchiveRepository.create({ password: user.password, userId: user.id, user }),
+      );
+
+      user.password = await bcrypt.hash(ADMIN_RESET_DEFAULT_PASSWORD, 10);
+      user.updated_at = new Date();
+      await this.userRepository.save(user);
+      await this.tokenService.revokeAllUserRefreshTokens(user.id);
+
+      this.logger.log(`Password for '${user.email}' reset by ${requestingUser.name} (${requestingUser.userId})`);
+
+      let emailSent = true;
+      try {
+        await this.emailService.sendEmail({
+          to: user.email,
+          subject: adminPasswordResetSubject(),
+          html: adminPasswordResetTemplate({
+            firstName: user.first_name,
+            email: user.email,
+            temporaryPassword: ADMIN_RESET_DEFAULT_PASSWORD,
+            resetBy: requestingUser.name,
+            domain,
+          }),
+        });
+      } catch (err) {
+        emailSent = false;
+        this.logger.error(
+          `Password reset email for '${user.email}' could not be sent: ${err instanceof Error ? err.message : String(err)}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      }
+
+      return {
+        message: emailSent
+          ? `Password reset and emailed to ${user.email}`
+          : `Password reset, but the email to ${user.email} could not be sent`,
+        emailSent,
+      };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException || error instanceof BadRequestException ||
+        error instanceof ForbiddenException
+      ) {
+        throw error;
+      }
+      this.logger.error(
+        `Admin password reset failed for ${uguid}: ${error instanceof Error ? error.message : String(error)}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      throw new InternalServerErrorException('Failed to reset password');
     }
   }
 

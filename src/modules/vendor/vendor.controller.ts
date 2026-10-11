@@ -1,7 +1,7 @@
 import {
   BadRequestException,
-  Body, Controller, Delete, Get, HttpCode, HttpStatus,
-  Param, ParseUUIDPipe, Patch, Post, Put, Query, Request, UploadedFile,
+  Body, Controller, DefaultValuePipe, Delete, Get, HttpCode, HttpStatus,
+  Param, ParseBoolPipe, ParseUUIDPipe, Patch, Post, Put, Query, Request, UploadedFile,
   UseGuards, UseInterceptors,
 } from '@nestjs/common';
 import {
@@ -137,6 +137,31 @@ export class VendorController {
     return this.vendorService.uploadVendorDocument(req.user.userId, file);
   }
 
+  @Post('import/preview')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager', 'ProjectManager', 'WarehouseManager')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Dry-run an import: how many rows are new and how many match existing vendors',
+    description:
+      'Reads and validates the file exactly as POST /vendors/import does but writes nothing. ' +
+      'Use it to ask the user before existing vendors are updated. Returns the same 422 ' +
+      'per-row errors as a real import.',
+  })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({ schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } })
+  @ApiResponse({ status: 200, description: 'total, toCreate, toUpdate and the matching rows' })
+  @ApiResponse({ status: 400, description: 'Unreadable / unsupported / oversized file' })
+  @ApiResponse({ status: 422, description: 'Validation errors' })
+  @UseInterceptors(FileInterceptor('file', {
+    storage: memoryStorage(),
+    limits: { fileSize: VENDOR_IMPORT_MAX_BYTES },
+  }))
+  async previewImport(@Request() req: any, @UploadedFile() file: Express.Multer.File) {
+    if (!file) throw new BadRequestException('No file provided');
+    const data = await this.vendorImportService.preview(file, req.user.organizationId);
+    return ResponseDto.success(data);
+  }
+
   @Post('import')
   @Roles('OrganizationAdmin', 'SuperAdmin', 'ProcurementManager', 'ProjectManager', 'WarehouseManager')
   @HttpCode(HttpStatus.OK)
@@ -150,22 +175,33 @@ export class VendorController {
       'name (case- and plural-insensitive). A blank Vendor Type defaults to "Supplier"; a ' +
       'Vendor Type or Material Category that does not exist yet is created. A vendor is matched ' +
       'on Vendor Name + Vendor Type + Material Category together — a match is updated ' +
-      '(replaced), otherwise a new vendor is created with a generated code. The whole import ' +
+      '(replaced) unless updateExisting=false, in which case it is left untouched and counted ' +
+      'as skipped; otherwise a new vendor is created with a generated code. The whole import ' +
       'is one transaction, including any Vendor Type or Material Category it creates: any ' +
       'invalid row (422, with per-row errors) or failure rolls everything back.',
   })
+  @ApiQuery({
+    name: 'updateExisting', required: false, type: Boolean,
+    description: 'Update vendors that already exist (default true). false skips them.',
+  })
   @ApiConsumes('multipart/form-data')
   @ApiBody({ schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } })
-  @ApiResponse({ status: 200, description: 'Import completed' })
+  @ApiResponse({ status: 200, description: 'Import completed: created, updated and skipped counts' })
   @ApiResponse({ status: 400, description: 'Unreadable / unsupported / oversized file' })
   @ApiResponse({ status: 422, description: 'Validation errors - nothing imported' })
   @UseInterceptors(FileInterceptor('file', {
     storage: memoryStorage(),
     limits: { fileSize: VENDOR_IMPORT_MAX_BYTES },
   }))
-  async importVendors(@Request() req: any, @UploadedFile() file: Express.Multer.File) {
+  async importVendors(
+    @Request() req: any,
+    @UploadedFile() file: Express.Multer.File,
+    @Query('updateExisting', new DefaultValuePipe(true), ParseBoolPipe) updateExisting: boolean,
+  ) {
     if (!file) throw new BadRequestException('No file provided');
-    const data = await this.vendorImportService.import(file, req.user.organizationId, req.user.email);
+    const data = await this.vendorImportService.import(
+      file, req.user.organizationId, req.user.email, { updateExisting },
+    );
     return ResponseDto.success(data);
   }
 

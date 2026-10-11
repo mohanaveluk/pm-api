@@ -1,7 +1,7 @@
 import {
   BadRequestException,
-  Body, Controller, Delete, Get, HttpCode, HttpStatus,
-  Param, Patch, Post, Put, Query, Request, UploadedFile, UseGuards,
+  Body, Controller, DefaultValuePipe, Delete, Get, HttpCode, HttpStatus,
+  Param, ParseBoolPipe, Patch, Post, Put, Query, Request, UploadedFile, UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import {
@@ -308,6 +308,31 @@ export class MaterialController {
     return this.materialService.uploadMaterialSpecificationDocument(req.user.userId, file);
   }
 
+  @Post('import/preview')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Dry-run an import: how many rows are new and how many match existing materials',
+    description:
+      'Reads and validates the file exactly as POST /materials/import does but writes nothing. ' +
+      'Use it to ask the user before existing materials are updated. Returns the same 422 ' +
+      'per-row errors as a real import.',
+  })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({ schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } })
+  @ApiResponse({ status: 200, description: 'total, toCreate, toUpdate and the matching rows' })
+  @ApiResponse({ status: 400, description: 'Unreadable / unsupported / oversized file' })
+  @ApiResponse({ status: 422, description: 'Validation errors' })
+  @UseInterceptors(FileInterceptor('file', {
+    storage: memoryStorage(),
+    limits: { fileSize: MATERIAL_IMPORT_MAX_BYTES },
+  }))
+  async previewImport(@Request() req: any, @UploadedFile() file: Express.Multer.File) {
+    if (!file) throw new BadRequestException('No file provided');
+    const data = await this.materialImportService.preview(file, req.user.organizationId);
+    return ResponseDto.success(data);
+  }
+
   @Post('import')
   @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
   @HttpCode(HttpStatus.OK)
@@ -316,23 +341,34 @@ export class MaterialController {
     description:
       'Columns: Code (ignored - codes are generated), Short Description, Long Description, UOM, ' +
       'Material Category, Material Group. Category, group and UOM are matched by name ' +
-      '(case-insensitive) and resolved to ids. A material whose Short Description already ' +
-      'exists is updated; otherwise a new one is created with a generated code. The whole ' +
-      'import is one transaction: any invalid row (422, with per-row errors) or failure ' +
-      'rolls everything back.',
+      '(case-insensitive) and resolved to ids. New materials are always created with a ' +
+      'generated code. A material whose Short Description already exists is updated unless ' +
+      'updateExisting=false, in which case it is left untouched and counted as skipped. The ' +
+      'whole import is one transaction: any invalid row (422, with per-row errors) or ' +
+      'failure rolls everything back.',
+  })
+  @ApiQuery({
+    name: 'updateExisting', required: false, type: Boolean,
+    description: 'Update materials that already exist (default true). false skips them.',
   })
   @ApiConsumes('multipart/form-data')
   @ApiBody({ schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } })
-  @ApiResponse({ status: 200, description: 'Import completed' })
+  @ApiResponse({ status: 200, description: 'Import completed: created, updated and skipped counts' })
   @ApiResponse({ status: 400, description: 'Unreadable / unsupported / oversized file' })
   @ApiResponse({ status: 422, description: 'Validation errors - nothing imported' })
   @UseInterceptors(FileInterceptor('file', {
     storage: memoryStorage(),
     limits: { fileSize: MATERIAL_IMPORT_MAX_BYTES },
   }))
-  async importMaterials(@Request() req: any, @UploadedFile() file: Express.Multer.File) {
+  async importMaterials(
+    @Request() req: any,
+    @UploadedFile() file: Express.Multer.File,
+    @Query('updateExisting', new DefaultValuePipe(true), ParseBoolPipe) updateExisting: boolean,
+  ) {
     if (!file) throw new BadRequestException('No file provided');
-    const data = await this.materialImportService.import(file, req.user.organizationId, req.user.email);
+    const data = await this.materialImportService.import(
+      file, req.user.organizationId, req.user.email, { updateExisting },
+    );
     return ResponseDto.success(data);
   }
 }

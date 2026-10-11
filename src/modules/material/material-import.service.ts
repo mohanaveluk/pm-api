@@ -59,7 +59,27 @@ export interface MaterialImportResult {
   total: number;
   created: number;
   updated: number;
-  items: { row: number; name: string; code: string; action: 'created' | 'updated' }[];
+  /** Rows matching an existing material that were left untouched (updateExisting=false). */
+  skipped: number;
+  items: { row: number; name: string; code: string; action: 'created' | 'updated' | 'skipped' }[];
+}
+
+export interface MaterialImportOptions {
+  /**
+   * What to do with rows that match a material already in the table. true (the
+   * default, and the behaviour before this option existed) updates them; false
+   * leaves them untouched and counts them as skipped. New materials are always added.
+   */
+  updateExisting?: boolean;
+}
+
+/** Read-only summary of what an import would do — nothing is written. */
+export interface MaterialImportPreview {
+  total: number;
+  toCreate: number;
+  toUpdate: number;
+  /** The rows that match an existing material (capped; see toUpdate for the full count). */
+  existing: { row: number; name: string; code: string }[];
 }
 
 const norm = (v: string) => v.trim().toLowerCase();
@@ -110,19 +130,15 @@ export class MaterialImportService {
     file: Express.Multer.File,
     organizationId: string,
     userEmail: string,
+    options: MaterialImportOptions = {},
   ): Promise<MaterialImportResult> {
-    if (!file?.buffer?.length) throw new BadRequestException('No file provided, or the file is empty');
-    if (file.size > MATERIAL_IMPORT_MAX_BYTES) {
-      throw new BadRequestException('File too large. The maximum size is 5 MB.');
-    }
+    const plan = await this.readPlan(file, organizationId);
 
-    const raw = await this.parse(file);
-    if (!raw.length) throw new BadRequestException('The file contains no material rows');
-    if (raw.length > MAX_ROWS) {
-      throw new BadRequestException(`The file has ${raw.length} rows; the maximum per import is ${MAX_ROWS}`);
-    }
-
-    const plan = await this.validate(raw, organizationId);
+    // Declined rows are dropped from the write set up front, so a Category,
+    // Group or UOM that only they referenced is not created either.
+    const updateExisting = options.updateExisting !== false;
+    const toWrite = updateExisting ? plan : plan.filter((p) => !p.existing);
+    const declined = updateExisting ? [] : plan.filter((p) => p.existing);
 
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -131,11 +147,13 @@ export class MaterialImportService {
       // Any Category / Group / UOM the sheet referenced but that don't exist
       // yet are created here, in the SAME transaction as the material writes
       // below, so a failure anywhere rolls all of it back together.
-      await this.resolveMasterData(plan, organizationId, userEmail, queryRunner);
+      await this.resolveMasterData(toWrite, organizationId, userEmail, queryRunner);
 
-      const result: MaterialImportResult = { total: plan.length, created: 0, updated: 0, items: [] };
+      const result: MaterialImportResult = {
+        total: plan.length, created: 0, updated: 0, skipped: declined.length, items: [],
+      };
 
-      for (const p of plan) {
+      for (const p of toWrite) {
         if (p.existing) {
           const m = p.existing;
           m.materialCategoryId = p.categoryId!;
@@ -170,9 +188,15 @@ export class MaterialImportService {
         }
       }
 
+      for (const p of declined) {
+        result.items.push({ row: p.row, name: p.name, code: p.existing!.code, action: 'skipped' });
+      }
+      result.items.sort((a, b) => a.row - b.row);
+
       await queryRunner.commitTransaction();
       this.logger.log(
-        `Material import by ${userEmail}: ${result.created} created, ${result.updated} updated`,
+        `Material import by ${userEmail}: ${result.created} created, ${result.updated} updated, ` +
+        `${result.skipped} skipped`,
       );
       return result;
     } catch (err: any) {
@@ -187,6 +211,39 @@ export class MaterialImportService {
     } finally {
       await queryRunner.release();
     }
+  }
+
+  // Dry run: reads and fully validates the file exactly as import() would, and
+  // reports how many rows are new vs. match an existing material — without
+  // writing anything (master data is only ever created inside import()'s
+  // transaction). Lets the caller ask the user before existing items are touched.
+  async preview(file: Express.Multer.File, organizationId: string): Promise<MaterialImportPreview> {
+    const plan = await this.readPlan(file, organizationId);
+    const existing = plan.filter((p) => p.existing);
+    return {
+      total: plan.length,
+      toCreate: plan.length - existing.length,
+      toUpdate: existing.length,
+      existing: existing
+        .slice(0, MAX_REPORTED_ERRORS)
+        .map((p) => ({ row: p.row, name: p.name, code: p.existing!.code })),
+    };
+  }
+
+  // Shared by import() and preview(): size/shape checks, parse, validate.
+  private async readPlan(file: Express.Multer.File, organizationId: string) {
+    if (!file?.buffer?.length) throw new BadRequestException('No file provided, or the file is empty');
+    if (file.size > MATERIAL_IMPORT_MAX_BYTES) {
+      throw new BadRequestException('File too large. The maximum size is 5 MB.');
+    }
+
+    const raw = await this.parse(file);
+    if (!raw.length) throw new BadRequestException('The file contains no material rows');
+    if (raw.length > MAX_ROWS) {
+      throw new BadRequestException(`The file has ${raw.length} rows; the maximum per import is ${MAX_ROWS}`);
+    }
+
+    return this.validate(raw, organizationId);
   }
 
   // ── Master data creation ─────────────────────────────────────────────

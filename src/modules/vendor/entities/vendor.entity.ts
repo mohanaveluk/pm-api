@@ -7,6 +7,7 @@ import { IndustryCategory } from '../../industry-category/entities/industry-cate
 import { VendorType }       from '../../vendor-type/entity/vendor-type.entity';
 
 import { VendorStatus }         from '../enums/vendor-status.enum';
+import { VendorAccountGroup }   from '../enums/vendor-account-group.enum';
 import { PendingStatusChange }  from '../enums/pending-status-change.enum';
 import { VendorClassification } from '../enums/vendor-classification.enum';
 import { RiskCategory }         from '../enums/risk-category.enum';
@@ -79,6 +80,11 @@ export class Vendor {
   // Operating / brand name when it differs from the legal vendor name.
   @Column({ length: 255, nullable: true })
   tradeName: string;
+
+  // Domestic / Import / One-time. Nullable so vendors that predate the column
+  // stay valid; new vendors are asked for it on the Identification step.
+  @Column({ type: 'enum', enum: VendorAccountGroup, nullable: true })
+  vendorAccountGroup: VendorAccountGroup;
 
   // Points at the vendor_types master (organization-administrable), not the
   // old fixed enum — every org can define its own classifications here.
