@@ -14,6 +14,12 @@ export enum MasterSequenceKey {
   DISCIPLINE          = 'DISCIPLINE',
   ACTIVITY            = 'ACTIVITY',
   VENDOR_TYPE         = 'VENDOR_TYPE',
+  PROJECT_TYPE        = 'PROJECT_TYPE',
+  WBS_COST_CODE       = 'WBS_COST_CODE',
+  CLIENT_TYPE         = 'CLIENT_TYPE',
+  CLIENT              = 'CLIENT',
+  PROJECT             = 'PROJECT',
+  MATERIAL_REQUISITION = 'MATERIAL_REQUISITION',
 }
 
 // Codes are zero-padded to this width: 0001, 0002, … Sequences beyond 9999
