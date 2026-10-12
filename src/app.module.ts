@@ -32,6 +32,12 @@ import { MaterialCategoryModule } from './modules/material-category/material-cat
 import { IndustryCategoryModule } from './modules/industry-category/industry-category.module';
 import { VendorModule } from './modules/vendor/vendor.module';
 import { VendorTypeModule } from './modules/vendor-type/vendor-type.module';
+import { ProjectTypeModule } from './modules/project-type/project-type.module';
+import { WbsCostCodeModule } from './modules/wbs-cost-code/wbs-cost-code.module';
+import { ClientTypeModule } from './modules/client-type/client-type.module';
+import { ClientModule } from './modules/client/client.module';
+import { ProjectModule } from './modules/project/project.module';
+import { MaterialRequisitionModule } from './modules/material-requisition/material-requisition.module';
 import { MaterialGroupModule } from './modules/material-group/material-group.module';
 import { UnitOfMeasurementModule } from './modules/unit-of-measurement/unit-of-measurement.module';
 import { MaterialModule } from './modules/material/material.module';
@@ -76,6 +82,12 @@ import { User } from './modules/user/entity/user.entity';
     IndustryCategoryModule,
     VendorModule,
     VendorTypeModule,
+    ProjectTypeModule,
+    WbsCostCodeModule,
+    ClientTypeModule,
+    ClientModule,
+    ProjectModule,
+    MaterialRequisitionModule,
     MaterialGroupModule,
     UnitOfMeasurementModule,
     MaterialModule,
