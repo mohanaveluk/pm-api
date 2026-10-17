@@ -365,9 +365,26 @@ describe('MaterialRequisitionService', () => {
       expect(harness.saved['MaterialRequisition']).toHaveLength(1);
     });
 
-    it('refuses a requisition that has been submitted', async () => {
+    it('edits a requisition under review in place, keeping its status', async () => {
+      const mr = existingMr({ status: MaterialRequisitionStatus.UNDER_REVIEW, submittedBy: 'first@x.com' });
+      mrRepo.findOne.mockResolvedValue(mr);
+      itemRepo.count.mockResolvedValue(2);
+
+      await service.update(ORG_A, MR_ID, { budgetHead: 'OPEX', submit: true } as any, USER);
+
+      expect(mr.status).toBe(MaterialRequisitionStatus.UNDER_REVIEW);
+      expect(mr.submittedBy).toBe('first@x.com');
+      expect(mr.budgetHead).toBe('OPEX');
+    });
+
+    it('keeps a requisition under review submittable', async () => {
       mrRepo.findOne.mockResolvedValue(existingMr({ status: MaterialRequisitionStatus.UNDER_REVIEW }));
-      await expect(service.update(ORG_A, MR_ID, { budgetHead: 'x' } as any, USER)).rejects.toThrow(ConflictException);
+      await expect(service.update(ORG_A, MR_ID, { items: [] } as any, USER)).rejects.toThrow('at least one material');
+    });
+
+    it('refuses an approved requisition', async () => {
+      mrRepo.findOne.mockResolvedValue(existingMr({ status: MaterialRequisitionStatus.APPROVED }));
+      await expect(service.update(ORG_A, MR_ID, { budgetHead: 'X' } as any, USER)).rejects.toThrow(ConflictException);
     });
 
     it('drops the WBS when the project changes and none is sent', async () => {

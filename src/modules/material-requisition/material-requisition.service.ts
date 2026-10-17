@@ -217,8 +217,12 @@ export class MaterialRequisitionService {
       throw new ConflictException('The requisition code is server-generated and cannot be changed');
     }
 
-    const mr = await this.findDraftOrThrow(organizationId, id);
-    const submit = dto.submit === true;
+    const mr = await this.findEditableOrThrow(organizationId, id);
+    // An Under Review requisition is already submitted: it is corrected in
+    // place, keeps its status and submission stamp, and must stay submittable.
+    const underReview = mr.status === MaterialRequisitionStatus.UNDER_REVIEW;
+    const submit = dto.submit === true && !underReview;
+    const mustBeSubmittable = submit || underReview;
 
     const projectId = dto.projectId ?? mr.projectId;
     if (dto.projectId && dto.projectId !== mr.projectId) {
@@ -232,7 +236,10 @@ export class MaterialRequisitionService {
     if (wbsCostCodeId) await this.assertWbsBelongsToProject(organizationId, wbsCostCodeId, projectId);
 
     const ros = dto.requiredOnSiteDate !== undefined ? (dto.requiredOnSiteDate || null) : mr.requiredOnSiteDate;
-    this.assertRequiredOnSite(ros, submit);
+    const rosChanged = dto.requiredOnSiteDate !== undefined
+      && String(ros ?? '').slice(0, 10) !== String(mr.requiredOnSiteDate ?? '').slice(0, 10);
+    // An unchanged date on a requisition already under review is not re-judged.
+    this.assertRequiredOnSite(ros, submit || (underReview && rosChanged));
 
     // Lines and documents are replaced as a set — but only when they were sent.
     const lines = dto.items !== undefined
@@ -240,7 +247,7 @@ export class MaterialRequisitionService {
       : null;
     const documents = dto.documents !== undefined ? this.resolveDocuments(dto.documents) : null;
 
-    if (submit) {
+    if (mustBeSubmittable) {
       const lineCount = lines ? lines.length : await this.itemRepo.count({ where: { requisitionId: id } });
       this.assertSubmittable(wbsCostCodeId ?? null, ros ? String(ros).slice(0, 10) : null, lineCount);
     }
@@ -554,6 +561,22 @@ export class MaterialRequisitionService {
   }
 
   // ── Helpers: validation ──────────────────────────────────────────
+
+  /** Statuses whose content can still be changed. */
+  private static readonly EDITABLE_STATUSES: readonly MaterialRequisitionStatus[] = [
+    MaterialRequisitionStatus.DRAFT, MaterialRequisitionStatus.UNDER_REVIEW,
+  ];
+
+  private async findEditableOrThrow(organizationId: string, id: string): Promise<MaterialRequisition> {
+    const mr = await this.mrRepo.findOne({ where: { id, organizationId, isDeleted: false } });
+    if (!mr) throw new NotFoundException('Material requisition not found');
+    if (!MaterialRequisitionService.EDITABLE_STATUSES.includes(mr.status)) {
+      throw new ConflictException(
+        'Only a draft or a requisition under review can be edited.',
+      );
+    }
+    return mr;
+  }
 
   private async findDraftOrThrow(organizationId: string, id: string): Promise<MaterialRequisition> {
     const mr = await this.mrRepo.findOne({ where: { id, organizationId, isDeleted: false } });
