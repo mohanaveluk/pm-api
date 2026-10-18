@@ -7,6 +7,7 @@ import { EmailService } from 'src/shared/email/email.service';
 import { CustomLoggerService } from '../logger/custom-logger.service';
 import { contactAdminTemplate } from 'src/shared/email/templates/contact-admin.template';
 import { contactAdminNotificationTemplate, contactThankYouTemplate } from 'src/shared/email/templates/contact-email.template';
+import { EmailType } from 'src/shared/email/enums/email.enums';
 
 @Injectable()
 export class ContactService {
@@ -28,6 +29,8 @@ export class ContactService {
     try {
 
       await this.emailService.sendEmail({
+        emailType: EmailType.CONTACT_ACKNOWLEDGEMENT,
+        reference: { type: 'CONTACT', id: String(contact.id) },
         to:      createContactDto.email,
         subject: 'We received your message – Voter Pulse',
         html:    contactThankYouTemplate(createContactDto),
@@ -35,6 +38,8 @@ export class ContactService {
       this.logger.log('Thank you email has been sent');
 
       await this.emailService.sendEmail({
+        emailType: EmailType.CONTACT_ADMIN_NOTIFICATION,
+        reference: { type: 'CONTACT', id: String(contact.id) },
         to: process.env.ADMIN_EMAIL,
         subject: `[Contact Us] New message from ${createContactDto.firstName} ${createContactDto.lastName} – ${createContactDto.subject}`,
         html: contactAdminNotificationTemplate(createContactDto),

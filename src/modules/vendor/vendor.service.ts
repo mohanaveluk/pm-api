@@ -4,6 +4,8 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  OnModuleInit,
+  Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -82,6 +84,18 @@ import {
   vendorBlacklistRejectedTemplate, vendorBlacklistRejectedSubject, VendorBlacklistRejectedData,
   vendorActivatedTemplate, vendorActivatedSubject, VendorActivatedData,
 } from '../../shared/email/templates/vendor-blacklist-approval-template-dark';
+import { EmailType } from 'src/shared/email/enums/email.enums';
+import { NotificationService } from '../notification/notification.service';
+import { WorkflowTrackingService } from '../workflow-tracking/workflow-tracking.service';
+import { WorkflowAction, WorkflowEntityType } from '../workflow-tracking/enums/workflow-tracking.enums';
+
+// The workflow step an evaluation decision is recorded as (ON_HOLD is a status change).
+const EVALUATION_ACTION: Partial<Record<EvaluationDecision, WorkflowAction>> = {
+  [EvaluationDecision.SUBMITTED]: WorkflowAction.SUBMITTED,
+  [EvaluationDecision.APPROVED]:  WorkflowAction.APPROVED,
+  [EvaluationDecision.REJECTED]:  WorkflowAction.REJECTED,
+  [EvaluationDecision.RETURNED]:  WorkflowAction.RETURNED,
+};
 
 const ALLOWED_SORT_FIELDS = new Set([
   'code', 'vendorName', 'tradeName', 'vendorStatus', 'vendorTypeId',
@@ -132,7 +146,7 @@ const VENDOR_SINGLETON_DOCUMENT_TYPES = new Set<VendorDocumentType>([
 ]);
 
 @Injectable()
-export class VendorService {
+export class VendorService implements OnModuleInit {
   constructor(
     @InjectRepository(Vendor)
     private readonly vendorRepo: Repository<Vendor>,
@@ -174,7 +188,62 @@ export class VendorService {
     private readonly cloudStorageService: CloudStorageService,
     private readonly emailService: EmailService,
     private readonly logger: CustomLoggerService,
+    @Optional() private readonly notifications?: NotificationService,
+    // Every action on a vendor is a workflow_events step, which notifies the users concerned.
+    @Optional() private readonly workflow?: WorkflowTrackingService,
   ) {}
+
+  /** A vendor's steps concern whoever created it (the actor is excluded by the notifier). */
+  onModuleInit(): void {
+    this.notifications?.registerWorkflowAudience([WorkflowEntityType.VENDOR], async (event, manager) => {
+      const vendor = await manager.findOne(Vendor, { where: { id: event.entityId } });
+      if (!vendor?.createdBy) return [];
+      const creator = await manager.findOne(User, {
+        where: { email: vendor.createdBy, organizationId: event.organizationId },
+      });
+      return creator ? [creator.id] : [];
+    });
+  }
+
+  /**
+   * Records one action on a vendor in workflow_events (assigning the vendor its
+   * trackingId on the first one); the step notifies the vendor's creator plus
+   * whoever the hints name. Never throws — the action has already happened.
+   */
+  private async trackVendor(
+    vendor: Vendor,
+    actorEmail: string,
+    step: {
+      action: WorkflowAction;
+      fromStatus?: string | null;
+      toStatus?: string | null;
+      comments?: string | null;
+      metadata?: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    if (!this.workflow) return;
+    try {
+      const actor = actorEmail
+        ? await this.userRepository.findOne({ where: { email: actorEmail, organizationId: vendor.organizationId } })
+        : null;
+      await this.workflow.track(Vendor, vendor, {
+        entityType: WorkflowEntityType.VENDOR,
+        entityReference: vendor.code,
+        action: step.action,
+        fromStatus: step.fromStatus ?? null,
+        toStatus: step.toStatus ?? null,
+        comments: step.comments ?? null,
+        actor: {
+          userId: actor?.id ?? null,
+          name: actor ? [actor.first_name, actor.last_name].filter(Boolean).join(' ').trim() || actorEmail : actorEmail,
+          email: actorEmail,
+        },
+        metadata: { vendorName: vendor.vendorName, ...step.metadata },
+      });
+    } catch (err) {
+      this.logger.error(`Vendor ${vendor.code} ${step.action} could not be tracked: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   // ══ Dependency validators ═════════════════════════════════════════════
 
@@ -704,6 +773,7 @@ export class VendorService {
       await queryRunner.commitTransaction();
 
       this.logger.log(`Vendor ${code} created in organization ${organizationId} by ${userEmail}`);
+      await this.trackVendor(vendor, userEmail, { action: WorkflowAction.CREATED, toStatus: vendor.vendorStatus });
       return this.findOne(vendorId, organizationId, userEmail, /* role */ '');
     } catch (err: any) {
       await queryRunner.rollbackTransaction();
@@ -881,6 +951,8 @@ export class VendorService {
         // frozen behind a request that does not belong to it.
         pendingStatusChange: _pending,
         pendingStatusChangeRequestId: _pendingId,
+        // The clone starts its own history.
+        trackingId: _trackingId,
         ...copyable
       } = source;
 
@@ -909,6 +981,11 @@ export class VendorService {
       await queryRunner.commitTransaction();
 
       this.logger.log(`Vendor ${source.code} cloned to ${code} by ${userEmail}`);
+      await this.trackVendor(clone, userEmail, {
+        action: WorkflowAction.CREATED,
+        toStatus: clone.vendorStatus,
+        metadata: { clonedFromId: source.id, clonedFromCode: source.code },
+      });
       return this.findOne(cloneId, organizationId, userEmail, /* role */ '');
     } catch (err) {
       await queryRunner.rollbackTransaction();
@@ -1751,9 +1828,9 @@ export class VendorService {
     // RETURNED leave vendorStatus at UNDER_EVALUATION: the decision just
     // recorded IS the record of what happened, so no CLARIFICATION_REQUIRED
     // or REJECTED vendorStatus value is needed.
+    const previousStatus = vendor.vendorStatus;
     if (dto.decision === EvaluationDecision.APPROVED) {
-      const previousStatus = vendor.vendorStatus;
-      await this.enable(id, organizationId, userEmail, role);
+      await this.enable(id, organizationId, userEmail, role, { track: false });
 
       const vendorType = await this.vendorTypeRepo.findOne({ where: { id: vendor.vendorTypeId } });
       const notificationSent = await this.sendVendorActivatedEmail(
@@ -1767,6 +1844,18 @@ export class VendorService {
     this.logger.log(
       `Vendor ${vendor.code} ${dto.stage} evaluation recorded (${dto.decision}) by ${userEmail}`,
     );
+    const approved = dto.decision === EvaluationDecision.APPROVED;
+    await this.trackVendor(vendor, userEmail, {
+      action: EVALUATION_ACTION[dto.decision] ?? WorkflowAction.STATUS_CHANGED,
+      fromStatus: previousStatus,
+      toStatus: approved ? VendorStatus.ACTIVE : dto.decision === EvaluationDecision.ON_HOLD ? 'ON_HOLD' : previousStatus,
+      comments: dto.comments,
+      metadata: {
+        evaluationId: evaluation.id, stage: dto.stage, decision: dto.decision, score: dto.score ?? null,
+        // The activation email (to the creator) already notifies them.
+        ...(approved && vendor.createdBy ? { emailedTo: [vendor.createdBy] } : {}),
+      },
+    });
     return evaluation as unknown as VendorEvaluationResponseDto;
   }
 
@@ -1812,6 +1901,11 @@ export class VendorService {
 
     try {
       return await this.emailService.sendEmail({
+        emailType: EmailType.APPROVE_VENDOR,
+        organizationId: vendor.organizationId,
+        reference: { type: 'VENDOR', id: vendor.id },
+        createdBy: approvedBy,
+        metadata: { vendorCode: vendor.code },
         to: vendor.createdBy,
         cc: approvedBy,
         subject: vendorActivatedSubject(data),
@@ -1900,6 +1994,11 @@ export class VendorService {
       await this.replaceChildren(queryRunner.manager, dto, id, organizationId, userEmail);
 
       await queryRunner.commitTransaction();
+      await this.trackVendor(vendor, userEmail, {
+        action: WorkflowAction.UPDATED,
+        toStatus: vendor.vendorStatus,
+        metadata: { fields: Object.keys(dto) },
+      });
     } catch (err) {
       await queryRunner.rollbackTransaction();
       this.logger.error(
@@ -1972,6 +2071,8 @@ export class VendorService {
     organizationId: string,
     userEmail: string,
     role: string,
+    // addEvaluation records the approval itself; the activation is part of it.
+    options: { track?: boolean } = {},
   ): Promise<VendorResponseDto> {
     const vendor = await this.findVendorOrThrow(id, organizationId);
 
@@ -1985,12 +2086,18 @@ export class VendorService {
       throw new ConflictException('Vendor is already active');
     }
 
+    const fromStatus = vendor.vendorStatus;
     vendor.vendorStatus = VendorStatus.ACTIVE;
     vendor.isActive     = true;
     vendor.updatedBy    = userEmail;
     await this.vendorRepo.save(vendor);
 
     this.logger.log(`Vendor ${vendor.code} enabled by ${userEmail}`);
+    if (options.track !== false) {
+      await this.trackVendor(vendor, userEmail, {
+        action: WorkflowAction.STATUS_CHANGED, fromStatus, toStatus: VendorStatus.ACTIVE,
+      });
+    }
     return this.findOne(id, organizationId, userEmail, role);
   }
 
@@ -2013,12 +2120,16 @@ export class VendorService {
     }
     this.assertNoPendingStatusChange(vendor, 'disable');
 
+    const fromStatus = vendor.vendorStatus;
     vendor.vendorStatus = VendorStatus.INACTIVE;
     vendor.isActive     = false;
     vendor.updatedBy    = userEmail;
     await this.vendorRepo.save(vendor);
 
     this.logger.log(`Vendor ${vendor.code} disabled by ${userEmail}`);
+    await this.trackVendor(vendor, userEmail, {
+      action: WorkflowAction.STATUS_CHANGED, fromStatus, toStatus: VendorStatus.INACTIVE,
+    });
     return this.findOne(id, organizationId, userEmail, role);
   }
 
@@ -2136,6 +2247,13 @@ export class VendorService {
     });
 
     const notificationSent = await this.sendApprovalEmail(request, vendor, approvers, token);
+    await this.trackVendor(vendor, userEmail, {
+      action: WorkflowAction.REQUESTED,
+      fromStatus: vendor.vendorStatus,
+      toStatus: pending,
+      comments: request.reason,
+      metadata: { requestId: request.id, requestType, emailedTo: approvers.map(a => a.email) },
+    });
 
     this.logger.log(
       `Vendor ${vendor.code} ${requestType} requested by ${userEmail}; ` +
@@ -2198,6 +2316,15 @@ export class VendorService {
     try {
       // Never log the token or the composed link.
       return await this.emailService.sendEmail({
+        emailType: request.requestType === StatusChangeRequestType.BLACKLIST
+          ? EmailType.BLOCK_VENDOR_APPROVAL_REQUEST
+          : EmailType.UNBLOCK_VENDOR_APPROVAL_REQUEST,
+        organizationId: vendor.organizationId,
+        reference: { type: 'VENDOR', id: vendor.id },
+        createdBy: request.requestedBy,
+        metadata: { vendorCode: vendor.code, requestId: request.id },
+        // The link carries the one-time approval token.
+        redact: [approvalUrl, token],
         to: approvers.map(a => a.email),
         //cc: 'gcpstudy0@gmail.com',
         subject:
@@ -2274,6 +2401,11 @@ export class VendorService {
 
     try {
       return await this.emailService.sendEmail({
+        emailType: EmailType.WITHDRAW_VENDOR_STATUS_REQUEST,
+        organizationId: vendor.organizationId,
+        reference: { type: 'VENDOR', id: vendor.id },
+        createdBy: request.decidedBy ?? originalRequest.requestedBy,
+        metadata: { vendorCode: vendor.code, requestId: originalRequest.id },
         to: approvers.map(a => a.email),
         cc: 'gcpstudy0@gmail.com',
         subject: vendorBlacklistWithdrawnSubject(data),
@@ -2318,6 +2450,13 @@ export class VendorService {
 
     try {
       return await this.emailService.sendEmail({
+        emailType: request.requestType === StatusChangeRequestType.BLACKLIST
+          ? EmailType.BLOCK_VENDOR
+          : EmailType.UNBLOCK_VENDOR,
+        organizationId: vendor.organizationId,
+        reference: { type: 'VENDOR', id: vendor.id },
+        createdBy: decidedBy,
+        metadata: { vendorCode: vendor.code, requestId: request.id },
         to: request.requestedBy,
         cc: decidedBy,
         subject: vendorBlacklistApprovedSubject(data),
@@ -2359,6 +2498,13 @@ export class VendorService {
 
     try {
       return await this.emailService.sendEmail({
+        emailType: request.requestType === StatusChangeRequestType.BLACKLIST
+          ? EmailType.REJECT_BLOCK_VENDOR_REQUEST
+          : EmailType.REJECT_UNBLOCK_VENDOR_REQUEST,
+        organizationId: vendor.organizationId,
+        reference: { type: 'VENDOR', id: vendor.id },
+        createdBy: decidedBy,
+        metadata: { vendorCode: vendor.code, requestId: request.id },
         to: request.requestedBy,
         cc: decidedBy,
         subject: vendorBlacklistRejectedSubject(data),
@@ -2393,6 +2539,7 @@ export class VendorService {
     }
 
     const now = new Date();
+    const fromStatus = vendor.vendorStatus;
     await this.dataSource.transaction(async manager => {
       if (request.requestType === StatusChangeRequestType.BLACKLIST) {
         vendor.vendorStatus    = VendorStatus.BLACKLISTED;
@@ -2423,6 +2570,13 @@ export class VendorService {
     });
 
     const notificationSent = await this.sendApprovedEmail(request, vendor, userEmail, now, dto.comments);
+    await this.trackVendor(vendor, userEmail, {
+      action: WorkflowAction.APPROVED,
+      fromStatus,
+      toStatus: vendor.vendorStatus,
+      comments: dto.comments,
+      metadata: { requestId: request.id, requestType: request.requestType, emailedTo: [request.requestedBy] },
+    });
     this.logger.warn(
       `Vendor ${vendor.code} ${request.requestType} request approved by ${userEmail} ` +
       `(raised by ${request.requestedBy}); requester notified (delivered=${notificationSent})`,
@@ -2465,6 +2619,13 @@ export class VendorService {
     });
 
     const notificationSent = await this.sendRejectedEmail(request, vendor, userEmail, now, dto.comments);
+    await this.trackVendor(vendor, userEmail, {
+      action: WorkflowAction.REJECTED,
+      fromStatus: vendor.vendorStatus,
+      toStatus: vendor.vendorStatus,
+      comments: dto.comments,
+      metadata: { requestId: request.id, requestType: request.requestType, emailedTo: [request.requestedBy] },
+    });
     this.logger.log(
       `Vendor ${vendor.code} ${request.requestType} request rejected by ${userEmail}; ` +
       `requester notified (delivered=${notificationSent})`,
@@ -2518,6 +2679,12 @@ export class VendorService {
     };
     const approvers = await this.resolveApprovers(organizationId, request.approverUserId);
     const notificationSent = await this.sendWithdrawalEmail(cancelledRequest, request, vendor, approvers);
+    await this.trackVendor(vendor, userEmail, {
+      action: WorkflowAction.CANCELLED,
+      fromStatus: vendor.vendorStatus,
+      toStatus: vendor.vendorStatus,
+      metadata: { requestId: request.id, requestType: request.requestType, emailedTo: approvers.map(a => a.email) },
+    });
     this.logger.log(
       `Vendor ${vendor.code} ${request.requestType} request withdrawn by ${userEmail}; ` +
       `${approvers.length} approver(s) notified (delivered=${notificationSent})`,
@@ -2707,6 +2874,7 @@ export class VendorService {
     });
 
     this.logger.log(`Vendor ${vendor.code} soft-deleted by ${userEmail}`);
+    await this.trackVendor(vendor, userEmail, { action: WorkflowAction.DELETED, toStatus: 'DELETED' });
   }
 
   // ══ Document upload ═══════════════════════════════════════════════════

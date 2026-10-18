@@ -20,6 +20,7 @@ import { orgRegistrationTemplate } from 'src/shared/email/templates/org-registra
 import { orgAdminCredentialsTemplate } from 'src/shared/email/templates/org-admin-credentials.template';
 import { VerifyOrganizationRegistration } from 'src/shared/email/templates/verify-email-template';
 import { CustomLoggerService } from '../logger/custom-logger.service';
+import { EmailType } from 'src/shared/email/enums/email.enums';
 
 const OTP_EXPIRY_MINUTES = 30;
 const MAX_OTP_ATTEMPTS   = 5;
@@ -79,6 +80,10 @@ export class OrganizationService {
       );
 
       await this.emailService.sendEmail({
+        emailType: EmailType.ORGANIZATION_VERIFICATION,
+        organizationId: org.id,
+        reference: { type: 'ORGANIZATION', id: org.id },
+        redact: [otp],
         to: dto.email,
         subject: 'Verify Your Organization Email',
         //html: orgRegistrationTemplate(otp, org.oguid, dto.organizationName),
@@ -165,6 +170,10 @@ export class OrganizationService {
     );
 
     await this.emailService.sendEmail({
+      emailType: EmailType.ORGANIZATION_VERIFICATION,
+      organizationId: org.id,
+      reference: { type: 'ORGANIZATION', id: org.id },
+      redact: [otp],
       to: email,
       subject: 'Your New Verification Code',
       //html: orgRegistrationTemplate(otp, org.oguid, org.organizationName),
@@ -346,6 +355,10 @@ export class OrganizationService {
     await this.userRepo.save(admin);
 
     await this.emailService.sendEmail({
+      emailType: EmailType.ORGANIZATION_ADMIN_CREDENTIALS,
+      organizationId: org.id,
+      reference: { type: 'USER', id: admin.id },
+      redact: [tempPassword],
       to: org.email,
       subject: `Welcome to the Platform — Your Admin Credentials`,
       html: orgAdminCredentialsTemplate(org.organizationName, org.email, tempPassword),

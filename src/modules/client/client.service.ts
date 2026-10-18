@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { MasterCodeService, MasterSequenceKey } from 'src/common/services/master-code.service';
 import { CloudStorageService } from 'src/common/services/cloud-storage.service';
 import { CustomLoggerService } from '../logger/custom-logger.service';
+import { WorkflowLockService } from '../workflow-tracking/workflow-lock.service';
 import { ClientType } from '../client-type/entity/client-type.entity';
 import { IndustryCategory } from '../industry-category/entities/industry-category.entity';
 import { ProjectType } from '../project-type/entity/project-type.entity';
@@ -103,6 +104,7 @@ export class ClientService {
     private readonly cloudStorageService: CloudStorageService,
     private readonly dataSource: DataSource,
     private readonly logger: CustomLoggerService,
+    private readonly workflowLock: WorkflowLockService,
   ) {}
 
   // ── Create ───────────────────────────────────────────────────────
@@ -277,6 +279,8 @@ export class ClientService {
     dto: UpdateClientDto,
     updatedBy: string,
   ): Promise<ClientResponseDto> {
+    // Frozen once a purchase order is raised against a requisition for this client.
+    await this.workflowLock.assertClientEditable(organizationId, id);
     // code is server-generated and immutable — the DTO has no such field, but
     // guard in case a caller bypasses validation.
     if ((dto as { code?: unknown }).code !== undefined) {
@@ -397,6 +401,8 @@ export class ClientService {
   }
 
   async remove(organizationId: string, id: string, deletedBy: string): Promise<void> {
+    // Frozen once a purchase order is raised against a requisition for this client.
+    await this.workflowLock.assertClientEditable(organizationId, id);
     const client = await this.findEntityOrThrow(organizationId, id, false);
 
     const subsidiaries = await this.clientRepo.count({

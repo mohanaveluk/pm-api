@@ -17,9 +17,14 @@ import { MaterialUsageValidationService } from './material-usage-validation.serv
 import { User } from '../user/entity/user.entity';
 import { CloudStorageService } from 'src/common/services/cloud-storage.service';
 import { MasterCodeService } from 'src/common/services/master-code.service';
+import { NotificationModule } from '../notification/notification.module';
+import { WorkflowTrackingModule } from '../workflow-tracking/workflow-tracking.module';
 
 @Module({
   imports: [
+    // Every material action is a workflow_events step; each step notifies the users concerned.
+    NotificationModule,
+    WorkflowTrackingModule,
     TypeOrmModule.forFeature([
       Material,
       MaterialCodeCounter,

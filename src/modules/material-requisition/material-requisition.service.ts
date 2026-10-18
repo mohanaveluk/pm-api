@@ -1,5 +1,5 @@
 import {
-  BadRequestException, ConflictException, Injectable, NotFoundException,
+  BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
@@ -17,20 +17,29 @@ import { WbsCostCode } from '../wbs-cost-code/entity/wbs-cost-code.entity';
 import { MaterialRequisition } from './entities/material-requisition.entity';
 import { MaterialRequisitionItem } from './entities/material-requisition-item.entity';
 import { MaterialRequisitionDocument } from './entities/material-requisition-document.entity';
+import { MaterialRequisitionParticipant } from './entities/material-requisition-participant.entity';
 import {
-  MaterialRequisitionStatus, REQUISITION_STATUS_TRANSITIONS, RequisitionLineSource,
+  EDITABLE_REQUISITION_STATUSES, MaterialRequisitionStatus, REQUISITION_STATUS_TRANSITIONS,
+  RequisitionLineSource, RequisitionParticipantRole, SUBMITTABLE_REQUISITION_STATUSES,
 } from './enums/material-requisition.enums';
+import { WorkflowTrackingService } from '../workflow-tracking/workflow-tracking.service';
+import { WorkflowAction, WorkflowEntityType } from '../workflow-tracking/enums/workflow-tracking.enums';
+import { WorkflowEventResponseDto } from '../workflow-tracking/dto/workflow-event-response.dto';
+import {
+  MaterialRequisitionWorkflowService, ParticipantChange, RequisitionActor, SettledStatus,
+} from './material-requisition-workflow.service';
 import {
   CreateMaterialRequisitionDto, RequisitionDocumentDto, RequisitionItemDto,
 } from './dto/create-material-requisition.dto';
 import { UpdateMaterialRequisitionDto } from './dto/update-material-requisition.dto';
 import {
-  MaterialRequisitionQueryDto, ProjectItemsQueryDto, RequisitionMaterialQueryDto,
+  AssignedRequisitionQueryDto, MaterialRequisitionQueryDto, ProjectItemsQueryDto, RequisitionMaterialQueryDto,
 } from './dto/material-requisition-query.dto';
 import {
   BomColumnsDto, BomPreviewDto, BomRowIssueDto, MaterialRequisitionListItemDto,
   MaterialRequisitionListResponseDto, MaterialRequisitionResponseDto, RequisitionCandidateDto,
   RequisitionCandidateListDto, RequisitionDocumentResponseDto, RequisitionItemResponseDto,
+  RequisitionParticipantResponseDto, RequisitionParticipantSummaryDto, RequisitionPermissionsDto,
   RequisitionWbsDto,
 } from './dto/material-requisition-response.dto';
 
@@ -69,7 +78,11 @@ export class MaterialRequisitionService {
     @InjectRepository(Material)                    private readonly materialRepo: Repository<Material>,
     @InjectRepository(Project)                     private readonly projectRepo: Repository<Project>,
     @InjectRepository(WbsCostCode)                 private readonly wbsRepo: Repository<WbsCostCode>,
+    @InjectRepository(MaterialRequisitionParticipant)
+    private readonly participantRepo: Repository<MaterialRequisitionParticipant>,
     private readonly masterCodeService: MasterCodeService,
+    private readonly workflow: MaterialRequisitionWorkflowService,
+    private readonly tracking: WorkflowTrackingService,
     private readonly cloudStorageService: CloudStorageService,
     private readonly logger: CustomLoggerService,
   ) {}
@@ -79,9 +92,10 @@ export class MaterialRequisitionService {
   async create(
     organizationId: string,
     dto: CreateMaterialRequisitionDto,
-    createdBy: string,
+    actor: RequisitionActor,
   ): Promise<MaterialRequisitionResponseDto> {
     const submit = dto.submit === true;
+    const createdBy = actor.email;
 
     await this.assertProjectUsable(organizationId, dto.projectId);
     if (dto.wbsCostCodeId) await this.assertWbsBelongsToProject(organizationId, dto.wbsCostCodeId, dto.projectId);
@@ -107,23 +121,44 @@ export class MaterialRequisitionService {
           throw new ConflictException(`Material requisition number '${number}' is already in use`);
         }
 
+        // The workflow id is born with the requisition and is carried by every
+        // document raised from it (review, approval, RFQ, purchase order, …).
+        const trackingId = this.tracking.generateTrackingId(organizationId);
+
         const row = queryRunner.manager.create(MaterialRequisition, {
           ...this.toColumns(dto),
           dguid: uuidv4(),
           organizationId,
           code,
           mrNumber: number,
+          trackingId,
+          reviewRound: 0,
           projectId: dto.projectId,
           wbsCostCodeId: dto.wbsCostCodeId ?? null,
           requiredOnSiteDate: ros,
-          status: submit ? MaterialRequisitionStatus.UNDER_REVIEW : MaterialRequisitionStatus.DRAFT,
-          submittedBy: submit ? createdBy : null,
-          submittedAt: submit ? new Date() : null,
+          status: MaterialRequisitionStatus.DRAFT,
           createdBy,
         });
         const header = await queryRunner.manager.save(MaterialRequisition, row);
 
         await this.writeChildren(queryRunner.manager, header, lines, documents, createdBy);
+        await this.workflow.replaceParticipants(queryRunner.manager, header, dto.reviewerIds, dto.approverIds, actor);
+        await this.tracking.record({
+          organizationId,
+          trackingId,
+          entityType: WorkflowEntityType.MATERIAL_REQUISITION,
+          entityId: header.id,
+          entityReference: header.mrNumber,
+          action: WorkflowAction.CREATED,
+          toStatus: MaterialRequisitionStatus.DRAFT,
+          actor: this.workflow.trackingActor(actor),
+          metadata: { projectId: header.projectId, wbsCostCodeId: header.wbsCostCodeId, lines: lines.length },
+        }, queryRunner.manager);
+
+        if (submit) {
+          await this.workflow.startRound(queryRunner.manager, header, actor);
+          await queryRunner.manager.save(MaterialRequisition, header);
+        }
         return header;
       },
     ).catch((err) => {
@@ -139,7 +174,8 @@ export class MaterialRequisitionService {
       throw err;
     });
 
-    return this.findOne(organizationId, saved.id);
+    if (submit) this.workflow.notifySubmitted(organizationId, saved.id, false);
+    return this.findOne(organizationId, saved.id, actor);
   }
 
   // ── Read ─────────────────────────────────────────────────────────
@@ -166,7 +202,7 @@ export class MaterialRequisitionService {
       // Escape LIKE wildcards so a search for "50%" matches literally.
       const like = `%${term.toLowerCase().replace(/[\\%_]/g, '\\$&')}%`;
       qb.andWhere(
-        '(LOWER(mr.code) LIKE :like OR LOWER(mr.mrNumber) LIKE :like ' +
+        '(LOWER(mr.code) LIKE :like OR LOWER(mr.mrNumber) LIKE :like OR LOWER(mr.trackingId) LIKE :like ' +
         'OR LOWER(prj.code) LIKE :like OR LOWER(prj.projectName) LIKE :like ' +
         'OR LOWER(cli.clientName) LIKE :like OR LOWER(mr.budgetHead) LIKE :like)',
         { like },
@@ -180,6 +216,7 @@ export class MaterialRequisitionService {
 
     const [rows, total] = await qb.skip((page - 1) * limit).take(limit).getManyAndCount();
     const counts = await this.countItems(rows.map((r) => r.id));
+    await this.attachParticipants(rows);
 
     return {
       items: rows.map((r) => this.toListItem(r, counts.get(r.id) ?? 0)),
@@ -190,7 +227,80 @@ export class MaterialRequisitionService {
     };
   }
 
-  async findOne(organizationId: string, id: string): Promise<MaterialRequisitionResponseDto> {
+  /**
+   * "My reviews" / "My approvals": requisitions the user is assigned to in the
+   * given role — by default only those still waiting for their decision.
+   */
+  async findAssigned(
+    organizationId: string,
+    actor: RequisitionActor,
+    role: RequisitionParticipantRole,
+    query: AssignedRequisitionQueryDto,
+  ): Promise<MaterialRequisitionListResponseDto> {
+    const { search, status, projectId, page = 1, limit = 20, sortBy = 'submittedAt', sortOrder = 'DESC' } = query;
+    const pendingOnly = query.pendingOnly !== false;
+
+    const qb = this.mrRepo
+      .createQueryBuilder('mr')
+      .innerJoin(
+        MaterialRequisitionParticipant, 'me',
+        'me.requisitionId = mr.id AND me.userId = :userId AND me.role = :role',
+        { userId: actor.userId, role },
+      )
+      .leftJoinAndSelect('mr.project', 'prj')
+      .leftJoinAndSelect('prj.client', 'cli')
+      .leftJoinAndSelect('mr.wbsCostCode', 'wbs')
+      .where('mr.organizationId = :organizationId', { organizationId })
+      .andWhere('mr.isDeleted = :isDeleted', { isDeleted: false })
+      // A draft has not reached anyone yet.
+      .andWhere('mr.status <> :draft', { draft: MaterialRequisitionStatus.DRAFT });
+
+    if (pendingOnly) {
+      qb.andWhere('me.decision IS NULL').andWhere('mr.status = :waiting', {
+        waiting: role === RequisitionParticipantRole.REVIEWER
+          ? MaterialRequisitionStatus.UNDER_REVIEW
+          : MaterialRequisitionStatus.REVIEWED,
+      });
+    } else if (status) {
+      qb.andWhere('mr.status = :status', { status });
+    }
+    if (projectId) qb.andWhere('mr.projectId = :projectId', { projectId });
+
+    const term = search?.trim();
+    if (term) {
+      const like = `%${term.toLowerCase().replace(/[\\%_]/g, '\\$&')}%`;
+      qb.andWhere(
+        '(LOWER(mr.mrNumber) LIKE :like OR LOWER(mr.trackingId) LIKE :like ' +
+        'OR LOWER(prj.code) LIKE :like OR LOWER(prj.projectName) LIKE :like OR LOWER(cli.clientName) LIKE :like)',
+        { like },
+      );
+    }
+
+    const sortColumn = sortBy === 'submittedAt' ? 'mr.submittedAt' : (SORT_COLUMNS[sortBy] ?? 'mr.submittedAt');
+    qb.orderBy(sortColumn, sortOrder === 'ASC' ? 'ASC' : 'DESC').addOrderBy(SORT_COLUMNS.code, 'DESC');
+
+    const [rows, total] = await qb.skip((page - 1) * limit).take(limit).getManyAndCount();
+    const counts = await this.countItems(rows.map((r) => r.id));
+    await this.attachParticipants(rows);
+    return {
+      items: rows.map((r) => this.toListItem(r, counts.get(r.id) ?? 0)),
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  /** Internal users who can be picked as reviewers or approvers. */
+  participantOptions(organizationId: string) {
+    return this.workflow.userOptions(organizationId);
+  }
+
+  async findOne(
+    organizationId: string,
+    id: string,
+    actor?: RequisitionActor,
+  ): Promise<MaterialRequisitionResponseDto> {
     const mr = await this.mrRepo.findOne({
       where: { id, organizationId, isDeleted: false },
       relations: {
@@ -198,11 +308,19 @@ export class MaterialRequisitionService {
         wbsCostCode: { discipline: { department: true } },
         items: true,
         documents: true,
+        participants: true,
       },
-      order: { items: { lineNumber: 'ASC' }, documents: { uploadedAt: 'ASC' } },
+      order: { items: { lineNumber: 'ASC' }, documents: { uploadedAt: 'ASC' }, participants: { sequence: 'ASC' } },
     });
     if (!mr) throw new NotFoundException('Material requisition not found');
-    return this.toResponse(mr);
+    if (actor) this.workflow.assertCanRead(mr, actor);
+
+    const history = await this.tracking.eventsFor(
+      organizationId,
+      [WorkflowEntityType.MATERIAL_REQUISITION, WorkflowEntityType.MR_REVIEW, WorkflowEntityType.MR_APPROVAL],
+      id,
+    );
+    return this.toResponse(mr, history, actor ? this.workflow.permissionsFor(mr, actor) : null);
   }
 
   // ── Update / submit / delete ─────────────────────────────────────
@@ -211,18 +329,26 @@ export class MaterialRequisitionService {
     organizationId: string,
     id: string,
     dto: UpdateMaterialRequisitionDto,
-    updatedBy: string,
+    actor: RequisitionActor,
   ): Promise<MaterialRequisitionResponseDto> {
     if ((dto as { code?: unknown }).code !== undefined) {
       throw new ConflictException('The requisition code is server-generated and cannot be changed');
     }
+    const updatedBy = actor.email;
 
     const mr = await this.findEditableOrThrow(organizationId, id);
+    const participants = await this.participantRepo.find({ where: { requisitionId: id } });
+    if (!this.workflow.permissionsFor({ ...mr, participants } as MaterialRequisition, actor).canEdit) {
+      throw new ForbiddenException('You cannot edit this requisition');
+    }
+
     // An Under Review requisition is already submitted: it is corrected in
-    // place, keeps its status and submission stamp, and must stay submittable.
+    // place (by its requester or an assigned reviewer), keeps its status and
+    // submission stamp, and must stay submittable.
     const underReview = mr.status === MaterialRequisitionStatus.UNDER_REVIEW;
-    const submit = dto.submit === true && !underReview;
+    const submit = dto.submit === true && SUBMITTABLE_REQUISITION_STATUSES.includes(mr.status);
     const mustBeSubmittable = submit || underReview;
+
 
     const projectId = dto.projectId ?? mr.projectId;
     if (dto.projectId && dto.projectId !== mr.projectId) {
@@ -266,19 +392,45 @@ export class MaterialRequisitionService {
     mr.wbsCostCodeId = wbsCostCodeId ?? null;
     mr.requiredOnSiteDate = ros ? String(ros).slice(0, 10) : null;
     mr.updatedBy = updatedBy;
-    if (submit) {
-      mr.status = MaterialRequisitionStatus.UNDER_REVIEW;
-      mr.submittedBy = updatedBy;
-      mr.submittedAt = new Date();
-    }
     // The loaded project relation would otherwise be written back over projectId.
     delete (mr as Partial<MaterialRequisition>).project;
 
+    let resubmitted = false;
+    let change: ParticipantChange | null = null;
+    let settled: SettledStatus = null;
     try {
       await this.mrRepo.manager.transaction(async (manager) => {
+        // Requisitions created before tracking ids existed get one now.
+        if (mr.status !== MaterialRequisitionStatus.DRAFT) await this.workflow.ensureTrackingId(manager, mr);
         await manager.save(MaterialRequisition, mr);
         if (lines || documents) {
           await this.replaceChildren(manager, mr, lines, documents, updatedBy);
+        }
+        // Reviewers change until reviewed, approvers until approved (requester only).
+        change = await this.workflow.replaceParticipants(manager, mr, dto.reviewerIds, dto.approverIds, actor);
+        if (change.changed && !submit) {
+          settled = await this.workflow.settleRound(manager, mr, actor);
+          if (settled) await manager.save(MaterialRequisition, mr);
+        }
+        if (underReview) await this.workflow.markReviewerEdit(manager, mr, actor);
+        // Drafts change freely; once submitted, every edit is part of the record.
+        if (mr.status !== MaterialRequisitionStatus.DRAFT) {
+          await this.tracking.record({
+            organizationId,
+            trackingId: mr.trackingId,
+            entityType: WorkflowEntityType.MATERIAL_REQUISITION,
+            entityId: mr.id,
+            entityReference: mr.mrNumber,
+            action: WorkflowAction.UPDATED,
+            fromStatus: mr.status,
+            toStatus: mr.status,
+            round: mr.reviewRound,
+            actor: this.workflow.trackingActor(actor),
+          }, manager);
+        }
+        if (submit) {
+          ({ resubmitted } = await this.workflow.startRound(manager, mr, actor));
+          await manager.save(MaterialRequisition, mr);
         }
       });
     } catch (err) {
@@ -289,30 +441,84 @@ export class MaterialRequisitionService {
       throw err;
     }
 
-    return this.findOne(organizationId, id);
+    if (submit) this.workflow.notifySubmitted(organizationId, id, resubmitted);
+    else if (change) this.workflow.notifyParticipantChange(organizationId, id, change, settled);
+    return this.findOne(organizationId, id, actor);
   }
 
-  /** DRAFT → UNDER_REVIEW. */
+  /**
+   * DRAFT → UNDER_REVIEW, or RETURNED → UNDER_REVIEW (a resubmission, which
+   * starts a new review round). Every reviewer is emailed.
+   */
   async submit(
     organizationId: string,
     id: string,
-    submittedBy: string,
+    actor: RequisitionActor,
   ): Promise<MaterialRequisitionResponseDto> {
-    const mr = await this.findDraftOrThrow(organizationId, id);
+    const mr = await this.mrRepo.findOne({ where: { id, organizationId, isDeleted: false } });
+    if (!mr) throw new NotFoundException('Material requisition not found');
+    if (mr.lockedAt) throw new ConflictException('This requisition is locked: a purchase order has been raised against it');
+    if (!SUBMITTABLE_REQUISITION_STATUSES.includes(mr.status)) {
+      throw new ConflictException('Only a draft or a returned requisition can be submitted for review');
+    }
+    const participants = await this.participantRepo.find({ where: { requisitionId: id } });
+    if (!this.workflow.permissionsFor({ ...mr, participants } as MaterialRequisition, actor).canSubmit) {
+      throw new ForbiddenException('You cannot submit this requisition');
+    }
+
     const lineCount = await this.itemRepo.count({ where: { requisitionId: id } });
     const ros = mr.requiredOnSiteDate ? String(mr.requiredOnSiteDate).slice(0, 10) : null;
-
     this.assertRequiredOnSite(ros, true);
     this.assertSubmittable(mr.wbsCostCodeId, ros, lineCount);
     await this.assertProjectUsable(organizationId, mr.projectId);
 
-    mr.status = MaterialRequisitionStatus.UNDER_REVIEW;
-    mr.submittedBy = submittedBy;
-    mr.submittedAt = new Date();
-    mr.updatedBy = submittedBy;
-    await this.mrRepo.save(mr);
+    let resubmitted = false;
+    await this.mrRepo.manager.transaction(async (manager) => {
+      ({ resubmitted } = await this.workflow.startRound(manager, mr, actor));
+      mr.updatedBy = actor.email;
+      await manager.save(MaterialRequisition, mr);
+    });
 
-    return this.findOne(organizationId, id);
+    this.workflow.notifySubmitted(organizationId, id, resubmitted);
+    return this.findOne(organizationId, id, actor);
+  }
+
+  /**
+   * Called by the purchase order module when a PO is raised: from then on the
+   * requisition — and its project, client and WBS / cost code — cannot be edited.
+   */
+  async lockForPurchaseOrder(
+    organizationId: string,
+    id: string,
+    purchaseOrderReference: string,
+    actor: RequisitionActor,
+  ): Promise<void> {
+    const mr = await this.mrRepo.findOne({ where: { id, organizationId, isDeleted: false } });
+    if (!mr) throw new NotFoundException('Material requisition not found');
+    if (mr.status !== MaterialRequisitionStatus.APPROVED) {
+      throw new ConflictException('A purchase order can only be raised against an approved requisition');
+    }
+    if (mr.lockedAt) return;
+    mr.lockedAt = new Date();
+    mr.lockedReason = `Purchase order ${purchaseOrderReference}`;
+    mr.lockedBy = actor.email;
+    await this.mrRepo.manager.transaction(async (manager) => {
+      await this.workflow.ensureTrackingId(manager, mr);
+      await manager.save(MaterialRequisition, mr);
+      await this.tracking.record({
+        organizationId,
+        trackingId: mr.trackingId,
+        entityType: WorkflowEntityType.MATERIAL_REQUISITION,
+        entityId: mr.id,
+        entityReference: mr.mrNumber,
+        action: WorkflowAction.LOCKED,
+        fromStatus: mr.status,
+        toStatus: mr.status,
+        actor: this.workflow.trackingActor(actor),
+        comments: mr.lockedReason,
+        metadata: { purchaseOrderReference },
+      }, manager);
+    });
   }
 
   /**
@@ -323,10 +529,11 @@ export class MaterialRequisitionService {
     organizationId: string,
     id: string,
     status: MaterialRequisitionStatus,
-    updatedBy: string,
+    actor: RequisitionActor,
   ): Promise<MaterialRequisitionResponseDto> {
     const mr = await this.mrRepo.findOne({ where: { id, organizationId, isDeleted: false } });
     if (!mr) throw new NotFoundException('Material requisition not found');
+    if (mr.lockedAt) throw new ConflictException('This requisition is locked: a purchase order has been raised against it');
 
     if (!REQUISITION_STATUS_TRANSITIONS[mr.status].includes(status)) {
       throw new ConflictException(
@@ -335,13 +542,38 @@ export class MaterialRequisitionService {
           : `A requisition that is ${mr.status} cannot be moved to ${status}.`,
       );
     }
+    // Releasing a hold returns the requisition to exactly where it was held.
+    if (mr.status === MaterialRequisitionStatus.ON_HOLD
+      && status !== MaterialRequisitionStatus.DISABLED && status !== MaterialRequisitionStatus.OBSOLETE) {
+      const back = mr.statusBeforeHold ?? MaterialRequisitionStatus.UNDER_REVIEW;
+      if (status !== back) {
+        throw new ConflictException(`This requisition was held while ${back}; releasing the hold returns it there.`);
+      }
+    }
 
+    const fromStatus = mr.status;
+    mr.statusBeforeHold = status === MaterialRequisitionStatus.ON_HOLD ? fromStatus : null;
     mr.status = status;
-    mr.updatedBy = updatedBy;
-    await this.mrRepo.save(mr);
+    mr.updatedBy = actor.email;
+    await this.mrRepo.manager.transaction(async (manager) => {
+      await this.workflow.ensureTrackingId(manager, mr);
+      await manager.save(MaterialRequisition, mr);
+      await this.tracking.record({
+        organizationId,
+        trackingId: mr.trackingId,
+        entityType: WorkflowEntityType.MATERIAL_REQUISITION,
+        entityId: mr.id,
+        entityReference: mr.mrNumber,
+        action: WorkflowAction.STATUS_CHANGED,
+        fromStatus,
+        toStatus: status,
+        round: mr.reviewRound,
+        actor: this.workflow.trackingActor(actor),
+      }, manager);
+    });
     this.logger.log(`Requisition ${mr.code} moved to ${status}`, MaterialRequisitionService.name);
 
-    return this.findOne(organizationId, id);
+    return this.findOne(organizationId, id, actor);
   }
 
   async remove(organizationId: string, id: string, deletedBy: string): Promise<void> {
@@ -349,7 +581,21 @@ export class MaterialRequisitionService {
     mr.isDeleted = true;
     mr.deletedAt = new Date();
     mr.deletedBy = deletedBy;
-    await this.mrRepo.save(mr);
+    await this.mrRepo.manager.transaction(async (manager) => {
+      await this.workflow.ensureTrackingId(manager, mr);
+      await manager.save(MaterialRequisition, mr);
+      await this.tracking.record({
+        organizationId,
+        trackingId: mr.trackingId,
+        entityType: WorkflowEntityType.MATERIAL_REQUISITION,
+        entityId: mr.id,
+        entityReference: mr.mrNumber,
+        action: WorkflowAction.DELETED,
+        fromStatus: mr.status,
+        toStatus: 'DELETED',
+        actor: { email: deletedBy, name: deletedBy },
+      }, manager);
+    });
   }
 
   // ── Documents ────────────────────────────────────────────────────
@@ -562,17 +808,15 @@ export class MaterialRequisitionService {
 
   // ── Helpers: validation ──────────────────────────────────────────
 
-  /** Statuses whose content can still be changed. */
-  private static readonly EDITABLE_STATUSES: readonly MaterialRequisitionStatus[] = [
-    MaterialRequisitionStatus.DRAFT, MaterialRequisitionStatus.UNDER_REVIEW,
-  ];
-
   private async findEditableOrThrow(organizationId: string, id: string): Promise<MaterialRequisition> {
     const mr = await this.mrRepo.findOne({ where: { id, organizationId, isDeleted: false } });
     if (!mr) throw new NotFoundException('Material requisition not found');
-    if (!MaterialRequisitionService.EDITABLE_STATUSES.includes(mr.status)) {
+    if (mr.lockedAt) {
+      throw new ConflictException('This requisition is locked: a purchase order has been raised against it');
+    }
+    if (!EDITABLE_REQUISITION_STATUSES.includes(mr.status)) {
       throw new ConflictException(
-        'Only a draft or a requisition under review can be edited.',
+        'Only a draft, a returned requisition or one under review can be edited.',
       );
     }
     return mr;
@@ -817,6 +1061,16 @@ export class MaterialRequisitionService {
     return out as Partial<MaterialRequisition>;
   }
 
+  /** Loads the reviewers and approvers of a page of requisitions in one query. */
+  private async attachParticipants(rows: MaterialRequisition[]): Promise<void> {
+    if (!rows.length) return;
+    const all = await this.participantRepo.find({
+      where: { requisitionId: In(rows.map((r) => r.id)) },
+      order: { sequence: 'ASC' },
+    });
+    for (const r of rows) r.participants = all.filter((p) => p.requisitionId === r.id);
+  }
+
   private async countItems(ids: string[]): Promise<Map<string, number>> {
     if (ids.length === 0) return new Map();
     const rows = await this.itemRepo
@@ -863,12 +1117,28 @@ export class MaterialRequisitionService {
       budgetHead: mr.budgetHead ?? null,
       requiredOnSiteDate: this.dateOnly(mr.requiredOnSiteDate),
       itemCount,
+      reviewers: this.summarise(mr, RequisitionParticipantRole.REVIEWER),
+      approvers: this.summarise(mr, RequisitionParticipantRole.APPROVER),
+      trackingId: mr.trackingId ?? null,
+      reviewRound: Number(mr.reviewRound ?? 0),
+      reviewedAt: mr.reviewedAt ?? null,
+      approvedAt: mr.approvedAt ?? null,
+      statusBeforeHold: mr.statusBeforeHold ?? null,
+      lockedAt: mr.lockedAt ?? null,
+      lockedReason: mr.lockedReason ?? null,
       submittedBy: mr.submittedBy ?? null,
       submittedAt: mr.submittedAt ?? null,
       createdBy: mr.createdBy ?? null,
       createdAt: mr.createdAt,
       updatedAt: mr.updatedAt,
     };
+  }
+
+  private summarise(mr: MaterialRequisition, role: RequisitionParticipantRole): RequisitionParticipantSummaryDto[] {
+    return (mr.participants ?? [])
+      .filter((p) => p.role === role)
+      .sort((a, b) => a.sequence - b.sequence)
+      .map((p) => ({ userId: p.userId, name: p.userName, decision: p.decision ?? null }));
   }
 
   private toWbs(w: WbsCostCode | null | undefined): RequisitionWbsDto | null {
@@ -886,7 +1156,25 @@ export class MaterialRequisitionService {
     };
   }
 
-  private toResponse(mr: MaterialRequisition): MaterialRequisitionResponseDto {
+  private toResponse(
+    mr: MaterialRequisition,
+    history: WorkflowEventResponseDto[] = [],
+    permissions: RequisitionPermissionsDto | null = null,
+  ): MaterialRequisitionResponseDto {
+    const participants: RequisitionParticipantResponseDto[] = [...(mr.participants ?? [])]
+      .sort((a, b) => (a.role === b.role ? a.sequence - b.sequence : a.role.localeCompare(b.role)))
+      .map((p) => ({
+        id: p.id,
+        role: p.role,
+        userId: p.userId,
+        userName: p.userName,
+        userEmail: p.userEmail,
+        sequence: p.sequence,
+        decision: p.decision ?? null,
+        decisionComments: p.decisionComments ?? null,
+        decidedAt: p.decidedAt ?? null,
+        editedInRound: !!p.editedInRound,
+      }));
     const items: RequisitionItemResponseDto[] = (mr.items ?? []).map((i) => ({
       id: i.id,
       lineNumber: i.lineNumber,
@@ -923,6 +1211,9 @@ export class MaterialRequisitionService {
       remarks: mr.remarks ?? null,
       items,
       documents,
+      participants,
+      history,
+      permissions,
       updatedBy: mr.updatedBy ?? null,
     };
   }

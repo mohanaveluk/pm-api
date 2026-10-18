@@ -38,6 +38,8 @@ import { ClientTypeModule } from './modules/client-type/client-type.module';
 import { ClientModule } from './modules/client/client.module';
 import { ProjectModule } from './modules/project/project.module';
 import { MaterialRequisitionModule } from './modules/material-requisition/material-requisition.module';
+import { WorkflowTrackingModule } from './modules/workflow-tracking/workflow-tracking.module';
+import { NotificationModule } from './modules/notification/notification.module';
 import { MaterialGroupModule } from './modules/material-group/material-group.module';
 import { UnitOfMeasurementModule } from './modules/unit-of-measurement/unit-of-measurement.module';
 import { MaterialModule } from './modules/material/material.module';
@@ -88,6 +90,8 @@ import { User } from './modules/user/entity/user.entity';
     ClientModule,
     ProjectModule,
     MaterialRequisitionModule,
+    WorkflowTrackingModule,
+    NotificationModule,
     MaterialGroupModule,
     UnitOfMeasurementModule,
     MaterialModule,

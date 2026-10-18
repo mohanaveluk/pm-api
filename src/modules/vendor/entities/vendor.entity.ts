@@ -381,6 +381,14 @@ export class Vendor {
   @OneToMany(() => VendorStatusChangeRequest, r => r.vendor) statusChangeRequests: VendorStatusChangeRequest[];
   @OneToMany(() => VendorProjectExperience,   e => e.vendor) projectExperiences: VendorProjectExperience[];
 
+  // ── Workflow ──────────────────────────────────────────────────────
+
+  // Ties every workflow_events step (and the notifications raised from them) of
+  // this vendor together. Assigned on the first recorded step; see
+  // WorkflowTrackingService.track().
+  @Column({ type: 'varchar', length: 30, nullable: true })
+  trackingId: string | null;
+
   // ── Soft delete ───────────────────────────────────────────────────
 
   @Column({ default: false, name: 'is_deleted' })

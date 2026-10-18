@@ -82,3 +82,18 @@ Already integrated in `src/modules/chat/` using `@anthropic-ai/sdk`. Model: `cla
 ### Deployment
 
 Docker images (`Dockerfile`, `Dockerfile.dev`, `Dockerfile.prod`) with `docker-compose.yml` for local MySQL. Deployed to Google Cloud Run via `cloudbuild.yaml`.
+
+### Workflow events & notifications (mandatory)
+
+Every user action on a business record — create/clone, update, submit, review, approve, reject,
+return, cancel, request, hold/release, enable/disable, obsolete, lock, delete — in Material Master,
+Vendor Master, Material Requisition, RFQ, Purchase Order and any new module must:
+
+1. record a step in `workflow_events` via `WorkflowTrackingService` (`track()` for records with their
+   own `trackingId` column, `record(..., manager)` inside a transaction; RFQ/PO reuse the MR trackingId);
+2. reach the `notifications` table — automatic once the module registers its audience with
+   `NotificationService.registerWorkflowAudience` and `linkFor()` knows the route;
+3. send emails only through `EmailService.sendEmail` with an `EmailType` (logged in `email_history`).
+
+New `WorkflowEntityType` / `WorkflowAction` values are MySQL ENUM changes — report the ALTER TABLE.
+Full checklist: `../pm-app/.claude/skills/pm-conventions/SKILL.md` §3a.

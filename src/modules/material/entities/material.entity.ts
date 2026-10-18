@@ -393,6 +393,14 @@ export class Material {
   // the document endpoints — writing these columns directly will be
   // overwritten on the next document change.
 
+  // ── Workflow ──────────────────────────────────────────────────────
+
+  // Ties every workflow_events step (and the notifications raised from them) of
+  // this material together. Assigned on the first recorded step; see
+  // WorkflowTrackingService.track().
+  @Column({ type: 'varchar', length: 30, nullable: true })
+  trackingId: string | null;
+
   // ── Soft delete ───────────────────────────────────────────────────
 
   @Column({ default: false, name: 'is_deleted' })

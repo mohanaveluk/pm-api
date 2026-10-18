@@ -34,6 +34,7 @@ import { CloudStorageService } from 'src/common/services/cloud-storage.service';
 import { PasswordResetToken } from './entity/password-reset-token.entity';
 import { buildOtpEmailHtml } from 'src/shared/email/templates/otc-email-templates';
 import { adminPasswordResetSubject, adminPasswordResetTemplate } from 'src/shared/email/templates/admin-password-reset-template';
+import { EmailType } from 'src/shared/email/enums/email.enums';
 
 // The password every admin-initiated reset sets. It is deliberately a single,
 // known value: the user is told to change it on first sign-in.
@@ -129,6 +130,10 @@ export class AuthService {
       // Send verification email
       this.logger.debug('Sending email...');
       await this.emailService.sendEmail({
+        emailType: EmailType.EMAIL_VERIFICATION,
+        reference: { type: 'USER', id: savedUser.id },
+        organizationId: savedUser.organizationId ?? null,
+        redact: [verificationCode],
         to: user.email,
         subject: 'Verify Your Email Address',
         html: verifyEmailTemplate(verificationCode, user.uguid, user.first_name, domain),
@@ -269,6 +274,10 @@ export class AuthService {
 
         // Send verification email
         await this.emailService.sendEmail({
+          emailType: EmailType.EMAIL_VERIFICATION,
+          reference: { type: 'USER', id: user.id },
+          organizationId: user.organizationId ?? null,
+          redact: [verificationCode],
           to: user.email,
           subject: 'Verify Your Email Address',
           html: verifyEmailTemplate(verificationCode, user.uguid, user.first_name, domain),
@@ -515,6 +524,10 @@ export class AuthService {
         // Send password reset email
       this.logger.debug(`Sending email with reset link for user: '${user.email}'`);
       await this.emailService.sendEmail({
+        emailType: EmailType.PASSWORD_RESET,
+        reference: { type: 'USER', id: user.id },
+        organizationId: user.organizationId ?? null,
+        redact: [resetLink, token],
         to: user.email,
         subject: 'Password Reset Request',
         html: passwordResetTemplate(resetLink),
@@ -587,6 +600,10 @@ export class AuthService {
       
       // Send verification email
       await this.emailService.sendEmail({
+        emailType: EmailType.EMAIL_VERIFICATION,
+        reference: { type: 'USER', id: user.id },
+        organizationId: user.organizationId ?? null,
+        redact: [verificationCode],
         to: user.email,
         subject: 'Verify Your Email Address',
         html: verifyEmailTemplate(verificationCode, user.uguid, user.first_name, "domain"),
@@ -619,6 +636,10 @@ export class AuthService {
       // Send verification email
       
       await this.emailService.sendEmail({
+        emailType: EmailType.EMAIL_VERIFICATION,
+        reference: { type: 'USER', id: user.id },
+        organizationId: user.organizationId ?? null,
+        redact: [verificationCode],
         to: user.email,
         cc: 'gcpstudy0@gmail.com',
         subject: 'Verify Your Email Address',
@@ -661,6 +682,10 @@ export class AuthService {
  
     // Send OTP email
     await this.emailService.sendEmail({
+      emailType: EmailType.PASSWORD_RESET_OTC,
+      reference: { type: 'USER', id: user.id },
+      organizationId: user.organizationId ?? null,
+      redact: [otp],
       to:      email,
       subject: 'Your password reset code',
       html:    buildOtpEmailHtml(otp, user.first_name ?? 'there'),
@@ -900,6 +925,12 @@ export class AuthService {
       let emailSent = true;
       try {
         await this.emailService.sendEmail({
+          emailType: EmailType.ADMIN_PASSWORD_RESET,
+          reference: { type: 'USER', id: user.id },
+          organizationId: user.organizationId ?? null,
+          fromUserId: requestingUser.userId,
+          createdBy: requestingUser.name,
+          redact: [ADMIN_RESET_DEFAULT_PASSWORD],
           to: user.email,
           subject: adminPasswordResetSubject(),
           html: adminPasswordResetTemplate({

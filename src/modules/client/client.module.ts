@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { WorkflowTrackingModule } from '../workflow-tracking/workflow-tracking.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { MasterCodeCounter } from 'src/common/entities/master-code-counter.entity';
 import { MasterCodeService } from 'src/common/services/master-code.service';
@@ -16,6 +17,8 @@ import { ClientController } from './client.controller';
 
 @Module({
   imports: [
+    // Edits are refused once a purchase order is raised against the client.
+    WorkflowTrackingModule,
     TypeOrmModule.forFeature([
       Client,
       ClientAddress,

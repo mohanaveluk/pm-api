@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
-  ArrayMaxSize, IsArray, IsBoolean, IsEnum, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString,
+  ArrayMaxSize, ArrayUnique, IsArray, IsBoolean, IsEnum, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString,
   IsUUID, IsUrl, Matches, Max, MaxLength, Min, ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -134,4 +134,22 @@ export class CreateMaterialRequisitionDto {
   })
   @IsOptional() @IsBoolean()
   submit?: boolean;
+
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Internal users who review the requisition, in order. At least one is required to submit. ' +
+      'Sent as the complete set; can be changed while the requisition is a draft or returned.',
+  })
+  @IsOptional() @IsArray() @ArrayMaxSize(20) @ArrayUnique() @IsUUID('all', { each: true })
+  reviewerIds?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Internal users who approve the requisition once it is reviewed. At least one is required to submit. ' +
+      'A user cannot be both a reviewer and an approver of the same requisition.',
+  })
+  @IsOptional() @IsArray() @ArrayMaxSize(20) @ArrayUnique() @IsUUID('all', { each: true })
+  approverIds?: string[];
 }

@@ -8,6 +8,7 @@ import { BadRequestException, ConflictException, NotFoundException } from '@nest
 import { MasterCodeService, MasterSequenceKey } from 'src/common/services/master-code.service';
 import { MasterCodeCounter } from 'src/common/entities/master-code-counter.entity';
 import { CustomLoggerService } from '../logger/custom-logger.service';
+import { WorkflowLockService } from '../workflow-tracking/workflow-lock.service';
 import { Client } from '../client/entities/client.entity';
 import { ClientContact } from '../client/entities/client-contact.entity';
 import { ProjectType } from '../project-type/entity/project-type.entity';
@@ -128,6 +129,10 @@ describe('ProjectService', () => {
         { provide: getRepositoryToken(MasterCodeCounter), useValue: makeRepo() },
         { provide: DataSource, useValue: harness.dataSource },
         { provide: CustomLoggerService, useValue: { log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(), verbose: jest.fn() } },
+        {
+          provide: WorkflowLockService,
+          useValue: { assertProjectEditable: jest.fn(), assertClientEditable: jest.fn(), assertWbsEditable: jest.fn() },
+        },
       ],
     }).compile();
     service = module.get(ProjectService);

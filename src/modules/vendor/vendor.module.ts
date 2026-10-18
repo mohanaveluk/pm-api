@@ -26,6 +26,8 @@ import { VendorCodeService }            from './vendor-code.service';
 import { VendorUsageValidationService } from './vendor-usage-validation.service';
 import { CloudStorageService } from 'src/common/services/cloud-storage.service';
 import { EmailModule } from 'src/shared/email/email.module';
+import { NotificationModule } from '../notification/notification.module';
+import { WorkflowTrackingModule } from '../workflow-tracking/workflow-tracking.module';
 import { MaterialCategory } from '../material-category/entities/material-category.entity';
 import { VendorImportService } from './vendor-import.service';
 import { MasterCodeCounter } from 'src/common/entities/master-code-counter.entity';
@@ -35,6 +37,9 @@ import { MasterCodeService } from 'src/common/services/master-code.service';
   imports: [
     // EmailModule supplies EmailService for the blacklist approval notifications.
     EmailModule,
+    // Every vendor action is a workflow_events step; each step notifies the users concerned.
+    NotificationModule,
+    WorkflowTrackingModule,
     TypeOrmModule.forFeature([
       Vendor,
       VendorCodeCounter,
