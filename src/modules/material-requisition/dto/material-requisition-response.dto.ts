@@ -1,7 +1,50 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
-  MaterialRequisitionStatus, RequisitionDocumentType, RequisitionLineSource,
+  MaterialRequisitionStatus, RequisitionDecision, RequisitionDocumentType, RequisitionLineSource,
+  RequisitionParticipantRole,
 } from '../enums/material-requisition.enums';
+import { WorkflowEventResponseDto } from '../../workflow-tracking/dto/workflow-event-response.dto';
+
+/** A reviewer or approver, with their decision in the current round. */
+export class RequisitionParticipantResponseDto {
+  @ApiProperty() id: string;
+  @ApiProperty({ enum: RequisitionParticipantRole }) role: RequisitionParticipantRole;
+  @ApiProperty() userId: string;
+  @ApiProperty() userName: string;
+  @ApiProperty() userEmail: string;
+  @ApiProperty() sequence: number;
+  @ApiPropertyOptional({ enum: RequisitionDecision }) decision: RequisitionDecision | null;
+  @ApiPropertyOptional() decisionComments: string | null;
+  @ApiPropertyOptional() decidedAt: Date | null;
+  @ApiProperty() editedInRound: boolean;
+}
+
+/** A reviewer or approver as the list shows them. */
+export class RequisitionParticipantSummaryDto {
+  @ApiProperty() userId: string;
+  @ApiProperty() name: string;
+  @ApiPropertyOptional({ enum: RequisitionDecision }) decision: RequisitionDecision | null;
+}
+
+/** An internal user who can be picked as reviewer or approver. */
+export class RequisitionUserOptionDto {
+  @ApiProperty() id: string;
+  @ApiProperty() name: string;
+  @ApiProperty() email: string;
+  @ApiPropertyOptional() position: string | null;
+  @ApiPropertyOptional() role: string | null;
+}
+
+/** What the signed-in user may do on this requisition right now. */
+export class RequisitionPermissionsDto {
+  @ApiProperty() canEdit: boolean;
+  @ApiProperty() canSubmit: boolean;
+  @ApiProperty({ description: 'An assigned reviewer whose decision is still due' }) canReview: boolean;
+  @ApiProperty({ description: 'An assigned approver whose decision is still due' }) canApprove: boolean;
+  @ApiProperty({ description: 'Reviewers can still be changed (until reviewed) by this user' }) canEditReviewers: boolean;
+  @ApiProperty({ description: 'Approvers can still be changed (until approved) by this user' }) canEditApprovers: boolean;
+  @ApiPropertyOptional({ enum: RequisitionParticipantRole, isArray: true }) myRoles: RequisitionParticipantRole[];
+}
 
 export class RequisitionItemResponseDto {
   @ApiProperty() id: string;
@@ -56,6 +99,15 @@ export class MaterialRequisitionListItemDto {
   @ApiPropertyOptional() budgetHead: string | null;
   @ApiPropertyOptional({ example: '2026-11-15' }) requiredOnSiteDate: string | null;
   @ApiProperty() itemCount: number;
+  @ApiProperty({ type: [RequisitionParticipantSummaryDto] }) reviewers: RequisitionParticipantSummaryDto[];
+  @ApiProperty({ type: [RequisitionParticipantSummaryDto] }) approvers: RequisitionParticipantSummaryDto[];
+  @ApiPropertyOptional({ example: 'TRK-7F3A9C2E-B41D0A55-9E2C6B10' }) trackingId: string | null;
+  @ApiProperty() reviewRound: number;
+  @ApiPropertyOptional() reviewedAt: Date | null;
+  @ApiPropertyOptional() approvedAt: Date | null;
+  @ApiPropertyOptional({ enum: MaterialRequisitionStatus }) statusBeforeHold: MaterialRequisitionStatus | null;
+  @ApiPropertyOptional({ description: 'Set once a purchase order is raised — no further edits' }) lockedAt: Date | null;
+  @ApiPropertyOptional() lockedReason: string | null;
   @ApiPropertyOptional() submittedBy: string | null;
   @ApiPropertyOptional() submittedAt: Date | null;
   @ApiPropertyOptional() createdBy: string | null;
@@ -74,6 +126,10 @@ export class MaterialRequisitionResponseDto extends MaterialRequisitionListItemD
   @ApiPropertyOptional() remarks: string | null;
   @ApiProperty({ type: [RequisitionItemResponseDto] }) items: RequisitionItemResponseDto[];
   @ApiProperty({ type: [RequisitionDocumentResponseDto] }) documents: RequisitionDocumentResponseDto[];
+  @ApiProperty({ type: [RequisitionParticipantResponseDto] }) participants: RequisitionParticipantResponseDto[];
+  @ApiProperty({ type: [WorkflowEventResponseDto], description: 'Every step taken on this requisition, oldest first' })
+  history: WorkflowEventResponseDto[];
+  @ApiPropertyOptional({ type: RequisitionPermissionsDto }) permissions: RequisitionPermissionsDto | null;
   @ApiPropertyOptional() updatedBy: string | null;
 }
 

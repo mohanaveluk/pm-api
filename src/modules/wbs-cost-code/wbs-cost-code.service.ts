@@ -13,6 +13,7 @@ import {
   MasterSequenceKey,
 } from 'src/common/services/master-code.service';
 import { CustomLoggerService } from '../logger/custom-logger.service';
+import { WorkflowLockService } from '../workflow-tracking/workflow-lock.service';
 import { CreateWbsCostCodeDto } from './dto/create-wbs-cost-code.dto';
 import { UpdateWbsCostCodeDto } from './dto/update-wbs-cost-code.dto';
 import { WbsCostCodeQueryDto } from './dto/wbs-cost-code-query.dto';
@@ -46,6 +47,7 @@ export class WbsCostCodeService {
     private readonly projectRepo: Repository<Project>,
     private readonly masterCodeService: MasterCodeService,
     private readonly logger: CustomLoggerService,
+    private readonly workflowLock: WorkflowLockService,
   ) {}
 
   async create(
@@ -165,6 +167,8 @@ export class WbsCostCodeService {
     dto: UpdateWbsCostCodeDto,
     updatedBy: string,
   ): Promise<WbsCostCodeResponseDto> {
+    // Frozen once a purchase order is raised against a requisition for this WBS / cost code.
+    await this.workflowLock.assertWbsEditable(organizationId, id);
     // Loaded without the discipline relation on purpose: with a stale
     // `discipline` object on the entity, TypeORM would write that relation's
     // id back over a newly assigned disciplineId.
@@ -203,6 +207,8 @@ export class WbsCostCodeService {
   }
 
   async remove(organizationId: string, id: string, deletedBy: string): Promise<void> {
+    // Frozen once a purchase order is raised against a requisition for this WBS / cost code.
+    await this.workflowLock.assertWbsEditable(organizationId, id);
     const row = await this.findActiveOrThrow(organizationId, id, false);
 
     row.isDeleted = true;

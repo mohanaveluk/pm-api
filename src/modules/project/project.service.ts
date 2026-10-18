@@ -6,6 +6,7 @@ import { Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { MasterCodeService, MasterSequenceKey } from 'src/common/services/master-code.service';
 import { CustomLoggerService } from '../logger/custom-logger.service';
+import { WorkflowLockService } from '../workflow-tracking/workflow-lock.service';
 import { Client } from '../client/entities/client.entity';
 import { ClientContact } from '../client/entities/client-contact.entity';
 import { ProjectType } from '../project-type/entity/project-type.entity';
@@ -54,6 +55,7 @@ export class ProjectService {
     @InjectRepository(User)        private readonly userRepo: Repository<User>,
     private readonly masterCodeService: MasterCodeService,
     private readonly logger: CustomLoggerService,
+    private readonly workflowLock: WorkflowLockService,
   ) {}
 
   // ── Create ───────────────────────────────────────────────────────
@@ -233,6 +235,8 @@ export class ProjectService {
     dto: UpdateProjectDto,
     updatedBy: string,
   ): Promise<ProjectResponseDto> {
+    // Frozen once a purchase order is raised against a requisition for this project.
+    await this.workflowLock.assertProjectEditable(organizationId, id);
     // The number is server-generated and immutable, and status has its own
     // endpoint — neither has a field in the DTO, but guard against a caller
     // that bypasses validation.
@@ -321,6 +325,8 @@ export class ProjectService {
   }
 
   async remove(organizationId: string, id: string, deletedBy: string): Promise<void> {
+    // Frozen once a purchase order is raised against a requisition for this project.
+    await this.workflowLock.assertProjectEditable(organizationId, id);
     const project = await this.findEntityOrThrow(organizationId, id, false);
 
     if (!DELETABLE_PROJECT_STATUSES.includes(project.status)) {

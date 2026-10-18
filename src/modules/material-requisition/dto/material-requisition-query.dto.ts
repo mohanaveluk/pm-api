@@ -1,7 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsIn, IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
-import { Type } from 'class-transformer';
-import { MaterialRequisitionStatus } from '../enums/material-requisition.enums';
+import { IsBoolean, IsEnum, IsIn, IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import { MaterialRequisitionStatus, RequisitionParticipantRole } from '../enums/material-requisition.enums';
 
 export const MR_SORT_FIELDS = [
   'code', 'mrNumber', 'project', 'status', 'requiredOnSiteDate', 'createdAt', 'updatedAt',
@@ -37,6 +37,25 @@ export class MaterialRequisitionQueryDto {
 }
 
 /** Search of the Material Master for the requisition's "select materials" step. */
+/** "My reviews" / "My approvals": requisitions the signed-in user is assigned to. */
+export class AssignedRequisitionQueryDto extends MaterialRequisitionQueryDto {
+  @ApiPropertyOptional({
+    description: 'true (default): only those still waiting for my decision in the current round',
+    default: true,
+  })
+  @IsOptional()
+  @Transform(({ value }) => value === undefined ? undefined : value === true || value === 'true')
+  @IsBoolean()
+  pendingOnly?: boolean = true;
+}
+
+/** Internal participants as the service sees them. */
+export interface AssignedFilter {
+  userId: string;
+  role: RequisitionParticipantRole;
+  pendingOnly: boolean;
+}
+
 export class RequisitionMaterialQueryDto {
   @ApiPropertyOptional({ description: 'Material code or description' })
   @IsOptional() @IsString()

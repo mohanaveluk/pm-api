@@ -8,6 +8,7 @@ import { WbsCostCode }  from '../../wbs-cost-code/entity/wbs-cost-code.entity';
 import { MaterialRequisitionStatus } from '../enums/material-requisition.enums';
 import { MaterialRequisitionItem }     from './material-requisition-item.entity';
 import { MaterialRequisitionDocument } from './material-requisition-document.entity';
+import { MaterialRequisitionParticipant } from './material-requisition-participant.entity';
 
 // Material Requisition header. The lines and the documents are child rows.
 //
@@ -21,6 +22,7 @@ import { MaterialRequisitionDocument } from './material-requisition-document.ent
 @Index('IDX_mr_org_status',   ['organizationId', 'status'])
 @Index('IDX_mr_org_project',  ['organizationId', 'projectId'])
 @Index('IDX_mr_org_deleted',  ['organizationId', 'isDeleted'])
+@Index('UQ_mr_org_tracking',  ['organizationId', 'trackingId'], { unique: true })
 export class MaterialRequisition {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -91,11 +93,45 @@ export class MaterialRequisition {
   @Column({ type: 'datetime', nullable: true })
   submittedAt: Date | null;
 
+  // Ties this requisition to every document raised from it (review, approval,
+  // RFQ, purchase order, …) — see WorkflowTrackingService. TRK-2026-0001.
+  @Column({ type: 'varchar', length: 30, nullable: true })
+  trackingId: string | null;
+
+  // Incremented on every (re)submission; reviewers' and approvers' decisions
+  // belong to the current round.
+  @Column({ type: 'int', default: 0 })
+  reviewRound: number;
+
+  @Column({ type: 'datetime', nullable: true })
+  reviewedAt: Date | null;
+
+  @Column({ type: 'datetime', nullable: true })
+  approvedAt: Date | null;
+
+  // Where an ON_HOLD requisition returns to when the hold is released.
+  @Column({ type: 'varchar', length: 30, nullable: true })
+  statusBeforeHold: MaterialRequisitionStatus | null;
+
+  // Set once a purchase order is raised against the requisition: from then on
+  // it — and its project, client and WBS / cost code — cannot be edited.
+  @Column({ type: 'datetime', nullable: true })
+  lockedAt: Date | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  lockedReason: string | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  lockedBy: string | null;
+
   @OneToMany(() => MaterialRequisitionItem, (i) => i.requisition)
   items: MaterialRequisitionItem[];
 
   @OneToMany(() => MaterialRequisitionDocument, (d) => d.requisition)
   documents: MaterialRequisitionDocument[];
+
+  @OneToMany(() => MaterialRequisitionParticipant, (p) => p.requisition)
+  participants: MaterialRequisitionParticipant[];
 
   @Column({ default: false, name: 'is_deleted' })
   isDeleted: boolean;

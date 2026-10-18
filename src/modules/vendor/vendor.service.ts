@@ -82,6 +82,7 @@ import {
   vendorBlacklistRejectedTemplate, vendorBlacklistRejectedSubject, VendorBlacklistRejectedData,
   vendorActivatedTemplate, vendorActivatedSubject, VendorActivatedData,
 } from '../../shared/email/templates/vendor-blacklist-approval-template-dark';
+import { EmailType } from 'src/shared/email/enums/email.enums';
 
 const ALLOWED_SORT_FIELDS = new Set([
   'code', 'vendorName', 'tradeName', 'vendorStatus', 'vendorTypeId',
@@ -1812,6 +1813,11 @@ export class VendorService {
 
     try {
       return await this.emailService.sendEmail({
+        emailType: EmailType.APPROVE_VENDOR,
+        organizationId: vendor.organizationId,
+        reference: { type: 'VENDOR', id: vendor.id },
+        createdBy: approvedBy,
+        metadata: { vendorCode: vendor.code },
         to: vendor.createdBy,
         cc: approvedBy,
         subject: vendorActivatedSubject(data),
@@ -2198,6 +2204,15 @@ export class VendorService {
     try {
       // Never log the token or the composed link.
       return await this.emailService.sendEmail({
+        emailType: request.requestType === StatusChangeRequestType.BLACKLIST
+          ? EmailType.BLOCK_VENDOR_APPROVAL_REQUEST
+          : EmailType.UNBLOCK_VENDOR_APPROVAL_REQUEST,
+        organizationId: vendor.organizationId,
+        reference: { type: 'VENDOR', id: vendor.id },
+        createdBy: request.requestedBy,
+        metadata: { vendorCode: vendor.code, requestId: request.id },
+        // The link carries the one-time approval token.
+        redact: [approvalUrl, token],
         to: approvers.map(a => a.email),
         //cc: 'gcpstudy0@gmail.com',
         subject:
@@ -2274,6 +2289,11 @@ export class VendorService {
 
     try {
       return await this.emailService.sendEmail({
+        emailType: EmailType.WITHDRAW_VENDOR_STATUS_REQUEST,
+        organizationId: vendor.organizationId,
+        reference: { type: 'VENDOR', id: vendor.id },
+        createdBy: request.decidedBy ?? originalRequest.requestedBy,
+        metadata: { vendorCode: vendor.code, requestId: originalRequest.id },
         to: approvers.map(a => a.email),
         cc: 'gcpstudy0@gmail.com',
         subject: vendorBlacklistWithdrawnSubject(data),
@@ -2318,6 +2338,13 @@ export class VendorService {
 
     try {
       return await this.emailService.sendEmail({
+        emailType: request.requestType === StatusChangeRequestType.BLACKLIST
+          ? EmailType.BLOCK_VENDOR
+          : EmailType.UNBLOCK_VENDOR,
+        organizationId: vendor.organizationId,
+        reference: { type: 'VENDOR', id: vendor.id },
+        createdBy: decidedBy,
+        metadata: { vendorCode: vendor.code, requestId: request.id },
         to: request.requestedBy,
         cc: decidedBy,
         subject: vendorBlacklistApprovedSubject(data),
@@ -2359,6 +2386,13 @@ export class VendorService {
 
     try {
       return await this.emailService.sendEmail({
+        emailType: request.requestType === StatusChangeRequestType.BLACKLIST
+          ? EmailType.REJECT_BLOCK_VENDOR_REQUEST
+          : EmailType.REJECT_UNBLOCK_VENDOR_REQUEST,
+        organizationId: vendor.organizationId,
+        reference: { type: 'VENDOR', id: vendor.id },
+        createdBy: decidedBy,
+        metadata: { vendorCode: vendor.code, requestId: request.id },
         to: request.requestedBy,
         cc: decidedBy,
         subject: vendorBlacklistRejectedSubject(data),

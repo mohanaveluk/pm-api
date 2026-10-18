@@ -11,6 +11,7 @@ import { MasterCodeService, MasterSequenceKey } from 'src/common/services/master
 import { MasterCodeCounter } from 'src/common/entities/master-code-counter.entity';
 import { CloudStorageService } from 'src/common/services/cloud-storage.service';
 import { CustomLoggerService } from '../logger/custom-logger.service';
+import { WorkflowLockService } from '../workflow-tracking/workflow-lock.service';
 import { ClientType } from '../client-type/entity/client-type.entity';
 import { IndustryCategory } from '../industry-category/entities/industry-category.entity';
 import { ProjectType } from '../project-type/entity/project-type.entity';
@@ -160,6 +161,10 @@ describe('ClientService', () => {
         { provide: CloudStorageService, useValue: cloud },
         { provide: DataSource, useValue: harness.dataSource },
         { provide: CustomLoggerService, useValue: { log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(), verbose: jest.fn() } },
+        {
+          provide: WorkflowLockService,
+          useValue: { assertProjectEditable: jest.fn(), assertClientEditable: jest.fn(), assertWbsEditable: jest.fn() },
+        },
       ],
     }).compile();
     service = module.get(ClientService);

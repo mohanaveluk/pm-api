@@ -18,7 +18,10 @@ import { MaterialRequisitionService } from './material-requisition.service';
 import { MaterialRequisition } from './entities/material-requisition.entity';
 import { MaterialRequisitionItem } from './entities/material-requisition-item.entity';
 import { MaterialRequisitionDocument } from './entities/material-requisition-document.entity';
+import { MaterialRequisitionParticipant } from './entities/material-requisition-participant.entity';
 import { MaterialRequisitionStatus } from './enums/material-requisition.enums';
+import { MaterialRequisitionWorkflowService, RequisitionActor } from './material-requisition-workflow.service';
+import { WorkflowTrackingService } from '../workflow-tracking/workflow-tracking.service';
 import { CreateMaterialRequisitionDto } from './dto/create-material-requisition.dto';
 
 const ORG_A = '11111111-1111-4111-8111-111111111111';
@@ -28,6 +31,7 @@ const WBS_ID = '55555555-5555-4555-8555-555555555555';
 const MAT_1 = '66666666-6666-4666-8666-666666666661';
 const MAT_2 = '66666666-6666-4666-8666-666666666662';
 const USER = 'pm@example.com';
+const ACTOR: RequisitionActor = { userId: 'user-pm', email: USER, name: 'Priya Menon', role: 'ProjectManager' };
 const FUTURE = '2999-01-01';
 
 const material = (id: string, code: string, extra: Record<string, unknown> = {}) => ({
@@ -99,6 +103,8 @@ describe('MaterialRequisitionService', () => {
   let mrRepo: any, itemRepo: any, docRepo: any, materialRepo: any, projectRepo: any, wbsRepo: any;
   let harness: ReturnType<typeof buildHarness>;
   let cloud: { isFileValid: jest.Mock; uploadFile: jest.Mock };
+  let workflow: Record<string, jest.Mock>;
+  let tracking: Record<string, jest.Mock>;
 
   const build = async (lastSequence = 0) => {
     harness = buildHarness(lastSequence);
@@ -116,6 +122,35 @@ describe('MaterialRequisitionService', () => {
       isFileValid: jest.fn(async () => true),
       uploadFile: jest.fn(async () => 'https://files.example.com/pm/doc.pdf'),
     };
+    // Review rounds, participants and emails are covered by the workflow spec;
+    // here startRound only does what the requisition itself observes.
+    workflow = {
+      replaceParticipants: jest.fn(async () => ({ changed: false, addedReviewerIds: [], addedApproverIds: [] })),
+      settleRound: jest.fn(async () => null),
+      notifyParticipantChange: jest.fn(),
+      ensureTrackingId: jest.fn(async (_m: any, mr: any) => {
+        mr.trackingId = mr.trackingId ?? 'TRK-BACKFILLED';
+        return mr.trackingId;
+      }),
+      startRound: jest.fn(async (_m: any, mr: any, actor: RequisitionActor) => {
+        mr.status = MaterialRequisitionStatus.UNDER_REVIEW;
+        mr.submittedBy = actor.email;
+        mr.submittedAt = new Date();
+        mr.reviewRound = (mr.reviewRound ?? 0) + 1;
+        return { resubmitted: false };
+      }),
+      notifySubmitted: jest.fn(),
+      markReviewerEdit: jest.fn(async () => undefined),
+      permissionsFor: jest.fn(() => ({ canEdit: true, canSubmit: true, canReview: false, canApprove: false, myRoles: [] })),
+      assertCanRead: jest.fn(),
+      trackingActor: jest.fn((a: RequisitionActor) => ({ userId: a.userId, name: a.name, email: a.email })),
+      userOptions: jest.fn(async () => []),
+    };
+    tracking = {
+      generateTrackingId: jest.fn(() => 'TRK-2026-0001'),
+      record: jest.fn(async () => undefined),
+      eventsFor: jest.fn(async () => []),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -127,6 +162,9 @@ describe('MaterialRequisitionService', () => {
         { provide: getRepositoryToken(Project),                     useValue: projectRepo },
         { provide: getRepositoryToken(WbsCostCode),                 useValue: wbsRepo },
         { provide: getRepositoryToken(MasterCodeCounter),           useValue: makeRepo() },
+        { provide: getRepositoryToken(MaterialRequisitionParticipant), useValue: makeRepo() },
+        { provide: MaterialRequisitionWorkflowService, useValue: workflow },
+        { provide: WorkflowTrackingService, useValue: tracking },
         { provide: CloudStorageService, useValue: cloud },
         { provide: DataSource, useValue: harness.dataSource },
         { provide: CustomLoggerService, useValue: { log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(), verbose: jest.fn() } },
@@ -150,7 +188,7 @@ describe('MaterialRequisitionService', () => {
 
   describe('create', () => {
     it('generates 0001 for the first requisition and uses it as the MR number', async () => {
-      await service.create(ORG_A, base(), USER);
+      await service.create(ORG_A, base(), ACTOR);
       const row = harness.saved['MaterialRequisition'][0];
 
       expect(row.code).toBe('0001');
@@ -159,7 +197,7 @@ describe('MaterialRequisitionService', () => {
 
     it('uses the MATERIAL_REQUISITION sequence key', async () => {
       await build(8);
-      await service.create(ORG_A, base(), USER);
+      await service.create(ORG_A, base(), ACTOR);
 
       expect(harness.saved['MaterialRequisition'][0].code).toBe('0009');
       expect(harness.manager.findOne).toHaveBeenCalledWith(
@@ -169,37 +207,54 @@ describe('MaterialRequisitionService', () => {
     });
 
     it('stores a supplied MR number instead of the code, and a blank one falls back to the code', async () => {
-      await service.create(ORG_A, base({ mrNumber: ' MR-2026-0001 ' }), USER);
+      await service.create(ORG_A, base({ mrNumber: ' MR-2026-0001 ' }), ACTOR);
       expect(harness.saved['MaterialRequisition'][0].mrNumber).toBe('MR-2026-0001');
 
       await build(0);
-      await service.create(ORG_A, base({ mrNumber: '   ' }), USER);
+      await service.create(ORG_A, base({ mrNumber: '   ' }), ACTOR);
       expect(harness.saved['MaterialRequisition'][0].mrNumber).toBe('0001');
     });
 
     it('rejects an MR number that is already in use', async () => {
       harness.manager.count.mockResolvedValue(1);
 
-      await expect(service.create(ORG_A, base({ mrNumber: 'MR-1' }), USER)).rejects.toThrow(ConflictException);
+      await expect(service.create(ORG_A, base({ mrNumber: 'MR-1' }), ACTOR)).rejects.toThrow(ConflictException);
       expect(harness.saved['MaterialRequisitionItem']).toBeUndefined();
     });
 
     it('is a draft by default and Under Review when submitted', async () => {
-      await service.create(ORG_A, base(), USER);
+      await service.create(ORG_A, base(), ACTOR);
       expect(harness.saved['MaterialRequisition'][0]).toMatchObject({
-        status: MaterialRequisitionStatus.DRAFT, submittedBy: null,
+        status: MaterialRequisitionStatus.DRAFT, trackingId: 'TRK-2026-0001', reviewRound: 0,
       });
+      expect(harness.saved['MaterialRequisition'][0].submittedBy).toBeUndefined();
+      expect(workflow.startRound).not.toHaveBeenCalled();
+      expect(workflow.notifySubmitted).not.toHaveBeenCalled();
 
       await build(0);
-      await service.create(ORG_A, base({ submit: true }), USER);
+      await service.create(ORG_A, base({ submit: true }), ACTOR);
       const row = harness.saved['MaterialRequisition'][0];
       expect(row.status).toBe(MaterialRequisitionStatus.UNDER_REVIEW);
       expect(row.submittedBy).toBe(USER);
       expect(row.submittedAt).toBeInstanceOf(Date);
+      expect(workflow.notifySubmitted).toHaveBeenCalledWith(ORG_A, MR_ID, false);
+    });
+
+    it('gives the requisition a tracking id, records it on the timeline and assigns its reviewers and approvers', async () => {
+      await service.create(ORG_A, base({ reviewerIds: ['r1'], approverIds: ['a1'] }), ACTOR);
+
+      expect(tracking.generateTrackingId).toHaveBeenCalledWith(ORG_A);
+      expect(workflow.replaceParticipants).toHaveBeenCalledWith(
+        harness.manager, expect.objectContaining({ id: MR_ID }), ['r1'], ['a1'], ACTOR,
+      );
+      expect(tracking.record).toHaveBeenCalledWith(
+        expect.objectContaining({ trackingId: 'TRK-2026-0001', action: 'CREATED', entityType: 'MATERIAL_REQUISITION' }),
+        harness.manager,
+      );
     });
 
     it('saves each line with a snapshot of the material, in order', async () => {
-      await service.create(ORG_A, base(), USER);
+      await service.create(ORG_A, base(), ACTOR);
       const lines = harness.saved['MaterialRequisitionItem'];
 
       expect(lines).toHaveLength(2);
@@ -218,7 +273,7 @@ describe('MaterialRequisitionService', () => {
           { materialId: '66666666-6666-4666-8666-666666666663', requestedQty: null },
           { materialId: '66666666-6666-4666-8666-666666666664' } as any,
         ],
-      }), USER);
+      }), ACTOR);
 
       const lines = harness.saved['MaterialRequisitionItem'];
       expect(lines).toHaveLength(1);
@@ -228,63 +283,63 @@ describe('MaterialRequisitionService', () => {
     it('cannot be submitted with no quantities at all', async () => {
       await expect(service.create(ORG_A, base({
         items: [{ materialId: MAT_1, requestedQty: 0 }], submit: true,
-      }), USER)).rejects.toThrow('at least one material with a quantity');
+      }), ACTOR)).rejects.toThrow('at least one material with a quantity');
     });
 
     it('can be saved as a draft with no lines yet', async () => {
-      await expect(service.create(ORG_A, base({ items: [] }), USER)).resolves.toBeDefined();
+      await expect(service.create(ORG_A, base({ items: [] }), ACTOR)).resolves.toBeDefined();
     });
 
     it('rejects a material listed twice', async () => {
       await expect(service.create(ORG_A, base({
         items: [{ materialId: MAT_1, requestedQty: 1 }, { materialId: MAT_1, requestedQty: 2 }],
-      }), USER)).rejects.toThrow('listed more than once');
+      }), ACTOR)).rejects.toThrow('listed more than once');
     });
 
     it('rejects an unknown or inactive material', async () => {
       materialRepo.find.mockResolvedValue([material(MAT_1, 'MAT-1')]);
-      await expect(service.create(ORG_A, base(), USER)).rejects.toThrow('was not found');
+      await expect(service.create(ORG_A, base(), ACTOR)).rejects.toThrow('was not found');
 
       materialRepo.find.mockResolvedValue([
         material(MAT_1, 'MAT-1'), material(MAT_2, 'MAT-2', { status: 'OBSOLETE' }),
       ]);
-      await expect(service.create(ORG_A, base(), USER)).rejects.toThrow('MAT-2 is not active');
+      await expect(service.create(ORG_A, base(), ACTOR)).rejects.toThrow('MAT-2 is not active');
     });
 
     describe('header', () => {
       it('requires an open project of the organization', async () => {
         projectRepo.findOne.mockResolvedValue(null);
-        await expect(service.create(ORG_A, base(), USER)).rejects.toThrow('project was not found');
+        await expect(service.create(ORG_A, base(), ACTOR)).rejects.toThrow('project was not found');
 
         projectRepo.findOne.mockResolvedValue({ id: PROJECT_ID, status: 'COMPLETED' });
-        await expect(service.create(ORG_A, base(), USER)).rejects.toThrow('project is closed');
+        await expect(service.create(ORG_A, base(), ACTOR)).rejects.toThrow('project is closed');
       });
 
       it('requires the WBS / cost code to belong to the chosen project', async () => {
         wbsRepo.findOne.mockResolvedValue({ id: WBS_ID, projectId: 'another-project', isActive: true });
-        await expect(service.create(ORG_A, base(), USER)).rejects.toThrow('does not belong to the chosen project');
+        await expect(service.create(ORG_A, base(), ACTOR)).rejects.toThrow('does not belong to the chosen project');
 
         wbsRepo.findOne.mockResolvedValue(null);
-        await expect(service.create(ORG_A, base(), USER)).rejects.toThrow('WBS / cost code was not found');
+        await expect(service.create(ORG_A, base(), ACTOR)).rejects.toThrow('WBS / cost code was not found');
       });
 
       it('needs a WBS and a required-on-site date to submit, but not to save a draft', async () => {
-        await expect(service.create(ORG_A, base({ wbsCostCodeId: null, requiredOnSiteDate: null }), USER))
+        await expect(service.create(ORG_A, base({ wbsCostCodeId: null, requiredOnSiteDate: null }), ACTOR))
           .resolves.toBeDefined();
 
         await expect(service.create(
-          ORG_A, base({ wbsCostCodeId: null, requiredOnSiteDate: null, submit: true }), USER,
+          ORG_A, base({ wbsCostCodeId: null, requiredOnSiteDate: null, submit: true }), ACTOR,
         )).rejects.toThrow('a WBS / cost code, the required-on-site date');
       });
 
       it('refuses a required-on-site date in the past when submitting only', async () => {
-        await expect(service.create(ORG_A, base({ requiredOnSiteDate: '2020-01-01' }), USER)).resolves.toBeDefined();
-        await expect(service.create(ORG_A, base({ requiredOnSiteDate: '2020-01-01', submit: true }), USER))
+        await expect(service.create(ORG_A, base({ requiredOnSiteDate: '2020-01-01' }), ACTOR)).resolves.toBeDefined();
+        await expect(service.create(ORG_A, base({ requiredOnSiteDate: '2020-01-01', submit: true }), ACTOR))
           .rejects.toThrow('cannot be in the past');
       });
 
       it('rejects a date that is not on the calendar', async () => {
-        await expect(service.create(ORG_A, base({ requiredOnSiteDate: '2026-02-30' }), USER))
+        await expect(service.create(ORG_A, base({ requiredOnSiteDate: '2026-02-30' }), ACTOR))
           .rejects.toThrow('not a valid date');
       });
     });
@@ -297,7 +352,7 @@ describe('MaterialRequisitionService', () => {
       it('saves the supplied documents', async () => {
         await service.create(ORG_A, base({
           documents: [doc('SPECIFICATION', 'Spec A'), doc('PROJECT_DOCUMENT', 'Drawings')],
-        }), USER);
+        }), ACTOR);
 
         expect(harness.saved['MaterialRequisitionDocument'].map((d: any) => d.documentName))
           .toEqual(['Spec A', 'Drawings']);
@@ -306,7 +361,7 @@ describe('MaterialRequisitionService', () => {
       it('keeps only the last covering document — a new upload replaces the old', async () => {
         await service.create(ORG_A, base({
           documents: [doc('COVERING_DOCUMENT', 'Old cover'), doc('SPECIFICATION', 'Spec A'), doc('COVERING_DOCUMENT', 'New cover')],
-        }), USER);
+        }), ACTOR);
 
         const names = harness.saved['MaterialRequisitionDocument'].map((d: any) => d.documentName);
         expect(names).toEqual(['Spec A', 'New cover']);
@@ -316,7 +371,7 @@ describe('MaterialRequisitionService', () => {
     it('rolls back without consuming a number when the insert fails', async () => {
       harness.manager.save.mockRejectedValue(new Error('db down'));
 
-      await expect(service.create(ORG_A, base(), USER)).rejects.toThrow('db down');
+      await expect(service.create(ORG_A, base(), ACTOR)).rejects.toThrow('db down');
       expect(harness.queryRunner.rollbackTransaction).toHaveBeenCalled();
       expect(harness.queryRunner.commitTransaction).not.toHaveBeenCalled();
     });
@@ -351,7 +406,7 @@ describe('MaterialRequisitionService', () => {
 
   describe('update', () => {
     it('replaces lines and documents when they are sent', async () => {
-      await service.update(ORG_A, MR_ID, { items: [{ materialId: MAT_1, requestedQty: 5 }], documents: [] } as any, USER);
+      await service.update(ORG_A, MR_ID, { items: [{ materialId: MAT_1, requestedQty: 5 }], documents: [] } as any, ACTOR);
 
       expect(harness.deleted.map((d) => d.entity).sort())
         .toEqual(['MaterialRequisitionDocument', 'MaterialRequisitionItem']);
@@ -359,7 +414,7 @@ describe('MaterialRequisitionService', () => {
     });
 
     it('leaves lines and documents alone when they are not sent', async () => {
-      await service.update(ORG_A, MR_ID, { budgetHead: 'OPEX' } as any, USER);
+      await service.update(ORG_A, MR_ID, { budgetHead: 'OPEX' } as any, ACTOR);
 
       expect(harness.deleted).toHaveLength(0);
       expect(harness.saved['MaterialRequisition']).toHaveLength(1);
@@ -370,7 +425,7 @@ describe('MaterialRequisitionService', () => {
       mrRepo.findOne.mockResolvedValue(mr);
       itemRepo.count.mockResolvedValue(2);
 
-      await service.update(ORG_A, MR_ID, { budgetHead: 'OPEX', submit: true } as any, USER);
+      await service.update(ORG_A, MR_ID, { budgetHead: 'OPEX', submit: true } as any, ACTOR);
 
       expect(mr.status).toBe(MaterialRequisitionStatus.UNDER_REVIEW);
       expect(mr.submittedBy).toBe('first@x.com');
@@ -379,32 +434,32 @@ describe('MaterialRequisitionService', () => {
 
     it('keeps a requisition under review submittable', async () => {
       mrRepo.findOne.mockResolvedValue(existingMr({ status: MaterialRequisitionStatus.UNDER_REVIEW }));
-      await expect(service.update(ORG_A, MR_ID, { items: [] } as any, USER)).rejects.toThrow('at least one material');
+      await expect(service.update(ORG_A, MR_ID, { items: [] } as any, ACTOR)).rejects.toThrow('at least one material');
     });
 
     it('refuses an approved requisition', async () => {
       mrRepo.findOne.mockResolvedValue(existingMr({ status: MaterialRequisitionStatus.APPROVED }));
-      await expect(service.update(ORG_A, MR_ID, { budgetHead: 'X' } as any, USER)).rejects.toThrow(ConflictException);
+      await expect(service.update(ORG_A, MR_ID, { budgetHead: 'X' } as any, ACTOR)).rejects.toThrow(ConflictException);
     });
 
     it('drops the WBS when the project changes and none is sent', async () => {
       const mr = existingMr();
       mrRepo.findOne.mockResolvedValue(mr);
 
-      await service.update(ORG_A, MR_ID, { projectId: '77777777-7777-4777-8777-777777777777' } as any, USER);
+      await service.update(ORG_A, MR_ID, { projectId: '77777777-7777-4777-8777-777777777777' } as any, ACTOR);
 
       expect(mr.wbsCostCodeId).toBeNull();
     });
 
     it('rejects a code change', async () => {
-      await expect(service.update(ORG_A, MR_ID, { code: 'X' } as any, USER)).rejects.toThrow(ConflictException);
+      await expect(service.update(ORG_A, MR_ID, { code: 'X' } as any, ACTOR)).rejects.toThrow(ConflictException);
     });
 
     it('saves and submits in one call', async () => {
       const mr = existingMr();
       mrRepo.findOne.mockResolvedValue(mr);
 
-      await service.update(ORG_A, MR_ID, { submit: true, items: [{ materialId: MAT_1, requestedQty: 5 }] } as any, USER);
+      await service.update(ORG_A, MR_ID, { submit: true, items: [{ materialId: MAT_1, requestedQty: 5 }] } as any, ACTOR);
 
       expect(mr.status).toBe(MaterialRequisitionStatus.UNDER_REVIEW);
     });
@@ -416,19 +471,19 @@ describe('MaterialRequisitionService', () => {
       mrRepo.findOne.mockResolvedValue(mr);
       itemRepo.count.mockResolvedValue(2);
 
-      await service.submit(ORG_A, MR_ID, USER);
+      await service.submit(ORG_A, MR_ID, ACTOR);
 
       expect(mr).toMatchObject({ status: MaterialRequisitionStatus.UNDER_REVIEW, submittedBy: USER });
     });
 
     it('refuses a draft with no lines', async () => {
       itemRepo.count.mockResolvedValue(0);
-      await expect(service.submit(ORG_A, MR_ID, USER)).rejects.toThrow('at least one material');
+      await expect(service.submit(ORG_A, MR_ID, ACTOR)).rejects.toThrow('at least one material');
     });
 
     it('refuses one already submitted', async () => {
       mrRepo.findOne.mockResolvedValue(existingMr({ status: MaterialRequisitionStatus.UNDER_REVIEW }));
-      await expect(service.submit(ORG_A, MR_ID, USER)).rejects.toThrow(ConflictException);
+      await expect(service.submit(ORG_A, MR_ID, ACTOR)).rejects.toThrow(ConflictException);
     });
   });
 
@@ -437,22 +492,22 @@ describe('MaterialRequisitionService', () => {
       const mr = existingMr({ status: MaterialRequisitionStatus.UNDER_REVIEW });
       mrRepo.findOne.mockResolvedValue(mr);
 
-      await service.changeStatus(ORG_A, MR_ID, MaterialRequisitionStatus.ON_HOLD, USER);
+      await service.changeStatus(ORG_A, MR_ID, MaterialRequisitionStatus.ON_HOLD, ACTOR);
       expect(mr.status).toBe(MaterialRequisitionStatus.ON_HOLD);
 
-      await service.changeStatus(ORG_A, MR_ID, MaterialRequisitionStatus.UNDER_REVIEW, USER);
+      await service.changeStatus(ORG_A, MR_ID, MaterialRequisitionStatus.UNDER_REVIEW, ACTOR);
       expect(mr.status).toBe(MaterialRequisitionStatus.UNDER_REVIEW);
     });
 
     it('refuses to move a draft', async () => {
       mrRepo.findOne.mockResolvedValue(existingMr());
-      await expect(service.changeStatus(ORG_A, MR_ID, MaterialRequisitionStatus.ON_HOLD, USER))
+      await expect(service.changeStatus(ORG_A, MR_ID, MaterialRequisitionStatus.ON_HOLD, ACTOR))
         .rejects.toThrow(ConflictException);
     });
 
     it('treats obsolete as final', async () => {
       mrRepo.findOne.mockResolvedValue(existingMr({ status: MaterialRequisitionStatus.OBSOLETE }));
-      await expect(service.changeStatus(ORG_A, MR_ID, MaterialRequisitionStatus.UNDER_REVIEW, USER))
+      await expect(service.changeStatus(ORG_A, MR_ID, MaterialRequisitionStatus.UNDER_REVIEW, ACTOR))
         .rejects.toThrow(ConflictException);
     });
   });
