@@ -1,8 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, EntityTarget, ObjectLiteral, Repository } from 'typeorm';
 import { createHmac, randomBytes } from 'crypto';
 import { CustomLoggerService } from '../logger/custom-logger.service';
+import { NotificationService } from '../notification/notification.service';
 import { WorkflowEvent } from './entities/workflow-event.entity';
 import {
   TRACKING_ID_PREFIX, WorkflowAction, WorkflowEntityType,
@@ -33,6 +34,29 @@ export interface RecordWorkflowEvent {
   metadata?: Record<string, unknown> | null;
 }
 
+/** A record that carries its own trackingId column (master data, requisitions). */
+export interface TrackedRecord {
+  id: string;
+  organizationId: string;
+  trackingId?: string | null;
+}
+
+/**
+ * Who hears about a step beyond the audience the owning module registered
+ * (NotificationService.registerWorkflowAudience). Put in the step's metadata.
+ */
+export interface WorkflowNotifyHints {
+  /** Extra recipients, by user id. */
+  notifyUserIds?: string[];
+  /** Extra recipients, by email (users of the same organization). */
+  notifyEmails?: string[];
+  /**
+   * Users who were sent an email about this same step: they get the email's
+   * notification, so the workflow one is not repeated for them.
+   */
+  emailedTo?: string[];
+}
+
 /**
  * The tracking id that ties a material requisition to every document raised
  * from it (review, approval, RFQ, RFQ approval, purchase order, …), and the
@@ -46,6 +70,8 @@ export class WorkflowTrackingService {
   constructor(
     @InjectRepository(WorkflowEvent) private readonly eventRepo: Repository<WorkflowEvent>,
     private readonly logger: CustomLoggerService,
+    // Each step is announced to the users concerned by the document.
+    @Optional() private readonly notifications?: NotificationService,
   ) {}
 
   /**
@@ -66,6 +92,44 @@ export class WorkflowTrackingService {
       .slice(0, 24)
       .toUpperCase();
     return `${TRACKING_ID_PREFIX}-${digest.slice(0, 8)}-${digest.slice(8, 16)}-${digest.slice(16, 24)}`;
+  }
+
+  /**
+   * Records a step of a record that keeps its own trackingId column (materials,
+   * vendors, …): assigns the record a tracking id first when it has none, then
+   * records the step — which notifies the users concerned.
+   *
+   * With a manager the id and the step are part of the caller's transaction and
+   * errors propagate; without one a failure is logged, never thrown.
+   */
+  async track(
+    target: EntityTarget<ObjectLiteral>,
+    record: TrackedRecord,
+    event: Omit<RecordWorkflowEvent, 'organizationId' | 'trackingId' | 'entityId'>,
+    manager?: EntityManager,
+  ): Promise<void> {
+    const run = async () => {
+      if (!record.trackingId) {
+        const trackingId = this.generateTrackingId(record.organizationId);
+        await (manager ?? this.eventRepo.manager).update(target, { id: record.id }, { trackingId });
+        record.trackingId = trackingId;
+      }
+      await this.record({
+        ...event,
+        organizationId: record.organizationId,
+        trackingId: record.trackingId,
+        entityId: record.id,
+      }, manager);
+    };
+    if (manager) return run();
+    try {
+      await run();
+    } catch (err) {
+      this.logger.error(
+        `Failed to track ${event.action} for ${event.entityType} ${record.id}: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
   }
 
   /**
@@ -116,11 +180,13 @@ export class WorkflowTrackingService {
     };
 
     if (manager) {
-      await manager.save(WorkflowEvent, manager.create(WorkflowEvent, row));
+      const saved = await manager.save(WorkflowEvent, manager.create(WorkflowEvent, row));
+      await this.notifications?.fromWorkflowEvent(saved, manager);
       return;
     }
     try {
-      await this.eventRepo.save(this.eventRepo.create(row));
+      const saved = await this.eventRepo.save(this.eventRepo.create(row));
+      await this.notifications?.fromWorkflowEvent(saved);
     } catch (err) {
       this.logger.error(
         `Failed to record workflow event ${event.action} for ${event.trackingId}: ${err instanceof Error ? err.message : String(err)}`,

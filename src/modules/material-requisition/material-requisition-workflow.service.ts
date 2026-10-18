@@ -1,8 +1,12 @@
 import {
   BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException,
 } from '@nestjs/common';
+import { OnModuleInit, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, In, Repository } from 'typeorm';
+import { NotificationDetail, NotificationService } from '../notification/notification.service';
+import { EmailHistory } from 'src/shared/email/entities/email-history.entity';
+import { WorkflowEvent } from '../workflow-tracking/entities/workflow-event.entity';
 import { User } from '../user/entity/user.entity';
 import { CustomLoggerService } from '../logger/custom-logger.service';
 import { WorkflowTrackingService } from '../workflow-tracking/workflow-tracking.service';
@@ -96,8 +100,22 @@ const DECISION_VERB: Record<RequisitionDecision, string> = {
  * Every step is written to the workflow timeline under the requisition's
  * trackingId, so past rounds stay visible after decisions are reset.
  */
+// What a requisition email asks of / tells its recipient, for the in-app item.
+const EMAIL_PURPOSE: Record<string, string> = {
+  REVIEW_MATERIAL_REQUISITION: 'Review requested',
+  RESUBMIT_MATERIAL_REQUISITION: 'Resubmitted for review',
+  APPROVAL_REQUEST_MATERIAL_REQUISITION: 'Approval requested',
+  APPROVE_MATERIAL_REQUISITION: 'Approved',
+  REJECT_MATERIAL_REQUISITION: 'Rejected',
+  RETURN_MATERIAL_REQUISITION: 'Returned for clarification',
+  CANCEL_MATERIAL_REQUISITION: 'Cancelled',
+  ONHOLD_MATERIAL_REQUISITION: 'Put on hold',
+  RELEASE_HOLD_MATERIAL_REQUISITION: 'Hold released',
+};
+const humanizeEmail = (type: string) => EMAIL_PURPOSE[type] ?? 'Update';
+
 @Injectable()
-export class MaterialRequisitionWorkflowService {
+export class MaterialRequisitionWorkflowService implements OnModuleInit {
   constructor(
     @InjectRepository(MaterialRequisition)            private readonly mrRepo: Repository<MaterialRequisition>,
     @InjectRepository(MaterialRequisitionParticipant) private readonly participantRepo: Repository<MaterialRequisitionParticipant>,
@@ -105,7 +123,86 @@ export class MaterialRequisitionWorkflowService {
     private readonly tracking: WorkflowTrackingService,
     private readonly notifier: MaterialRequisitionNotificationService,
     private readonly logger: CustomLoggerService,
+    @Optional() private readonly notifications?: NotificationService,
   ) {}
+
+  /** Requisition steps are announced to its requester, reviewers and approvers. */
+  onModuleInit(): void {
+    this.notifications?.registerWorkflowAudience(
+      [WorkflowEntityType.MATERIAL_REQUISITION, WorkflowEntityType.MR_REVIEW, WorkflowEntityType.MR_APPROVAL],
+      (event, manager) => this.concernedUsers(event, manager),
+    );
+    // Every requisition email also shows in the application with the requisition's project.
+    this.notifications?.registerEmailDescriber(
+      ['MATERIAL_REQUISITION'],
+      (history, manager) => this.describeForEmail(history, manager),
+    );
+  }
+
+  /**
+   * The in-app item that accompanies a requisition email: which requisition,
+   * for which project (and its description), client, WBS and site date.
+   */
+  async describeForEmail(
+    history: EmailHistory,
+    manager: EntityManager,
+  ): Promise<{ message: string; metadata: Record<string, unknown> } | null> {
+    if (!history.referenceId) return null;
+    const mr = await manager.findOne(MaterialRequisition, {
+      where: { id: history.referenceId },
+      relations: { project: { client: true }, wbsCostCode: true },
+    });
+    if (!mr) return null;
+
+    const project = mr.project;
+    const projectLabel = project ? `${project.code} — ${project.projectName}` : null;
+    const details: NotificationDetail[] = [
+      { label: 'Requisition', value: mr.mrNumber },
+      ...(projectLabel ? [{ label: 'Project', value: projectLabel }] : []),
+      ...(project?.description ? [{ label: 'Project description', value: project.description }] : []),
+      ...(project?.client?.clientName ? [{ label: 'Client', value: project.client.clientName }] : []),
+      ...(mr.wbsCostCode ? [{ label: 'WBS / Cost code', value: `${mr.wbsCostCode.code} — ${mr.wbsCostCode.projectDetails}` }] : []),
+      ...(mr.requiredOnSiteDate ? [{ label: 'Required on site', value: String(mr.requiredOnSiteDate) }] : []),
+      ...(mr.createdBy ? [{ label: 'Requested by', value: mr.createdBy }] : []),
+    ];
+
+    const what = humanizeEmail(history.emailType);
+    const message = [
+      `${what}: Material Requisition ${mr.mrNumber}${projectLabel ? ` for project ${projectLabel}` : ''}.`,
+      project?.description ? project.description : '',
+    ].filter(Boolean).join(' ');
+
+    return {
+      message,
+      metadata: {
+        mrNumber: mr.mrNumber,
+        projectId: mr.projectId,
+        projectCode: project?.code ?? null,
+        projectName: project?.projectName ?? null,
+        projectDescription: project?.description ?? null,
+        toStatus: mr.status,
+        round: mr.reviewRound || null,
+        details,
+      },
+    };
+  }
+
+  /** The requester and everyone assigned to review or approve the requisition. */
+  async concernedUsers(event: WorkflowEvent, manager: EntityManager): Promise<string[]> {
+    const mr = await manager.findOne(MaterialRequisition, {
+      where: { id: event.entityId, organizationId: event.organizationId },
+      select: { id: true, createdBy: true, organizationId: true },
+    });
+    if (!mr) return [];
+    const participants = await manager.find(MaterialRequisitionParticipant, {
+      where: { requisitionId: mr.id },
+      select: { userId: true },
+    });
+    const requester = mr.createdBy
+      ? await manager.findOne(User, { where: { email: mr.createdBy, organizationId: mr.organizationId }, select: { id: true } })
+      : null;
+    return [...new Set([...(requester ? [requester.id] : []), ...participants.map((p) => p.userId)])];
+  }
 
   // ── Who can be assigned ──────────────────────────────────────────
 

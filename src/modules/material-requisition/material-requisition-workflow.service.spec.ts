@@ -234,6 +234,32 @@ describe('MaterialRequisitionWorkflowService', () => {
     });
   });
 
+  describe('in-app item for an email', () => {
+    it('describes the requisition with its project, description, client and WBS', async () => {
+      const findOne = jest.fn(async () => ({
+        ...requisition(), mrNumber: '0002', projectId: 'p-1', requiredOnSiteDate: '2026-11-01', createdBy: 'req@x.com',
+        status: MaterialRequisitionStatus.UNDER_REVIEW, reviewRound: 1,
+        project: { code: 'PRJ-01', projectName: 'Tower A', description: 'Structural works, block A', client: { clientName: 'Acme' } },
+        wbsCostCode: { code: 'W-10', projectDetails: 'Foundations' },
+      }));
+      const out = await service.describeForEmail(
+        { emailType: 'REVIEW_MATERIAL_REQUISITION', referenceId: MR_ID } as any, { findOne } as any,
+      );
+
+      expect(out?.message).toBe('Review requested: Material Requisition 0002 for project PRJ-01 — Tower A. Structural works, block A');
+      expect(out?.metadata).toMatchObject({ projectDescription: 'Structural works, block A', toStatus: 'UNDER_REVIEW' });
+      expect((out?.metadata.details as any[]).map((d) => d.label)).toEqual([
+        'Requisition', 'Project', 'Project description', 'Client', 'WBS / Cost code', 'Required on site', 'Requested by',
+      ]);
+    });
+
+    it('has nothing to add for a requisition that no longer exists', async () => {
+      expect(await service.describeForEmail(
+        { emailType: 'APPROVE_MATERIAL_REQUISITION', referenceId: 'gone' } as any, { findOne: jest.fn(async () => null) } as any,
+      )).toBeNull();
+    });
+  });
+
   describe('rounds', () => {
     it('starts a new round on resubmission and clears every decision', async () => {
       mr = requisition({ status: MaterialRequisitionStatus.RETURNED, reviewRound: 1 });

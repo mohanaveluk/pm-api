@@ -2,6 +2,8 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  OnModuleInit,
+  Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -41,6 +43,9 @@ import { MaterialUsageValidationService } from './material-usage-validation.serv
 import { User } from '../user/entity/user.entity';
 import { CloudStorageService } from 'src/common/services/cloud-storage.service';
 import { CustomLoggerService } from '../logger/custom-logger.service';
+import { NotificationService } from '../notification/notification.service';
+import { WorkflowTrackingService } from '../workflow-tracking/workflow-tracking.service';
+import { WorkflowAction, WorkflowEntityType } from '../workflow-tracking/enums/workflow-tracking.enums';
 
 const ALLOWED_SORT_FIELDS = new Set([
   'code', 'shortDescription', 'status', 'criticalityLevel',
@@ -48,7 +53,7 @@ const ALLOWED_SORT_FIELDS = new Set([
 ]);
 
 @Injectable()
-export class MaterialService {
+export class MaterialService implements OnModuleInit {
   constructor(
     @InjectRepository(Material)
     private readonly materialRepo: Repository<Material>,
@@ -67,7 +72,62 @@ export class MaterialService {
     private readonly usageValidation: MaterialUsageValidationService,
     private readonly cloudStorageService: CloudStorageService,
     private readonly logger: CustomLoggerService,
+    // Every action on a material is a workflow_events step, which notifies the users concerned.
+    @Optional() private readonly workflow?: WorkflowTrackingService,
+    @Optional() private readonly notifications?: NotificationService,
   ) {}
+
+  /** A material's steps concern whoever created it (the actor is excluded by the notifier). */
+  onModuleInit(): void {
+    this.notifications?.registerWorkflowAudience([WorkflowEntityType.MATERIAL], async (event, manager) => {
+      const material = await manager.findOne(Material, { where: { id: event.entityId } });
+      if (!material?.createdBy) return [];
+      const creator = await manager.findOne(User, {
+        where: { email: material.createdBy, organizationId: event.organizationId },
+      });
+      return creator ? [creator.id] : [];
+    });
+  }
+
+  /**
+   * Records one action on a material in workflow_events (assigning the material
+   * its trackingId on the first one); the step notifies the material's creator.
+   * Never throws — the action has already happened.
+   */
+  private async trackMaterial(
+    material: Material,
+    actorEmail: string,
+    step: {
+      action: WorkflowAction;
+      fromStatus?: string | null;
+      toStatus?: string | null;
+      comments?: string | null;
+      metadata?: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    if (!this.workflow) return;
+    try {
+      const actor = actorEmail
+        ? await this.userRepository.findOne({ where: { email: actorEmail, organizationId: material.organizationId } })
+        : null;
+      await this.workflow.track(Material, material, {
+        entityType: WorkflowEntityType.MATERIAL,
+        entityReference: material.code,
+        action: step.action,
+        fromStatus: step.fromStatus ?? null,
+        toStatus: step.toStatus ?? null,
+        comments: step.comments ?? null,
+        actor: {
+          userId: actor?.id ?? null,
+          name: actor ? [actor.first_name, actor.last_name].filter(Boolean).join(' ').trim() || actorEmail : actorEmail,
+          email: actorEmail,
+        },
+        metadata: { shortDescription: material.shortDescription, ...step.metadata },
+      });
+    } catch (err) {
+      this.logger.error(`Material ${material.code} ${step.action} could not be tracked: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   // ── Dependency validators ─────────────────────────────────────────────
 
@@ -178,6 +238,11 @@ export class MaterialService {
       this.logger.log(
         `Material ${material.code} locked by purchase order ${purchaseOrderReference}`,
       );
+      await this.trackMaterial(material, userEmail, {
+        action: WorkflowAction.LOCKED,
+        toStatus: material.status,
+        metadata: { purchaseOrderReference },
+      });
     }
 
     return this.findOne(id, organizationId);
@@ -735,6 +800,7 @@ export class MaterialService {
 
       await queryRunner.commitTransaction();
 
+      await this.trackMaterial(material, userEmail, { action: WorkflowAction.CREATED, toStatus: material.status });
       return this.findOne(material.id, organizationId);
     } catch (err) {
       await queryRunner.rollbackTransaction();
@@ -805,6 +871,8 @@ export class MaterialService {
         purchaseOrderIssuedAt:  _poIssuedAt,
         purchaseOrderReference: _poRef,
         purchaseOrderIssuedBy:  _poBy,
+        // The clone starts its own history.
+        trackingId: _trackingId,
         ...copyable
       } = source;
 
@@ -866,6 +934,11 @@ export class MaterialService {
       await queryRunner.commitTransaction();
 
       this.logger.log(`Material ${source.code} cloned to ${code} by ${userEmail}`);
+      await this.trackMaterial(clone, userEmail, {
+        action: WorkflowAction.CREATED,
+        toStatus: clone.status,
+        metadata: { clonedFromId: source.id, clonedFromCode: source.code },
+      });
       return this.findOne(cloneId, organizationId);
     } catch (err) {
       await queryRunner.rollbackTransaction();
@@ -1040,6 +1113,12 @@ export class MaterialService {
       throw err;
     }
 
+    await this.trackMaterial(material, userEmail, {
+      action: WorkflowAction.UPDATED,
+      toStatus: material.status,
+      metadata: { fields: Object.keys(dto), ignoredFields: skippedFields },
+    });
+
     if (skippedFields.length) {
       this.logger.log(
         `Material ${material.code} is purchase-order locked; ignored update to ` +
@@ -1059,9 +1138,13 @@ export class MaterialService {
       throw new ConflictException('Material is already active');
     }
 
+    const fromStatus = material.status;
     material.status    = MaterialStatus.ACTIVE;
     material.updatedBy = userEmail;
     await this.materialRepo.save(material);
+    await this.trackMaterial(material, userEmail, {
+      action: WorkflowAction.STATUS_CHANGED, fromStatus, toStatus: material.status,
+    });
     return this.findOne(id, organizationId);
   }
 
@@ -1075,9 +1158,13 @@ export class MaterialService {
       throw new ConflictException('Material is already inactive');
     }
 
+    const fromStatus = material.status;
     material.status    = MaterialStatus.INACTIVE;
     material.updatedBy = userEmail;
     await this.materialRepo.save(material);
+    await this.trackMaterial(material, userEmail, {
+      action: WorkflowAction.STATUS_CHANGED, fromStatus, toStatus: material.status,
+    });
     return this.findOne(id, organizationId);
   }
 
@@ -1091,9 +1178,13 @@ export class MaterialService {
       throw new ConflictException('Material is already marked obsolete');
     }
 
+    const fromStatus = material.status;
     material.status    = MaterialStatus.OBSOLETE;
     material.updatedBy = userEmail;
     await this.materialRepo.save(material);
+    await this.trackMaterial(material, userEmail, {
+      action: WorkflowAction.STATUS_CHANGED, fromStatus, toStatus: material.status,
+    });
     return this.findOne(id, organizationId);
   }
 
@@ -1107,12 +1198,14 @@ export class MaterialService {
     this.assertNotPoLocked(material, 'deleted');
     this.assertNotInUse(material);
 
+    const fromStatus = material.status;
     material.isDeleted = true;
     material.deletedAt = new Date();
     material.deletedBy = userEmail;
     material.status    = MaterialStatus.INACTIVE;
     material.updatedBy = userEmail;
     await this.materialRepo.save(material);
+    await this.trackMaterial(material, userEmail, { action: WorkflowAction.DELETED, fromStatus, toStatus: 'DELETED' });
   }
 
   async uploadMaterialSpecificationDocument(userId: string, file: Express.Multer.File): Promise<{ message: string; url: string }> {

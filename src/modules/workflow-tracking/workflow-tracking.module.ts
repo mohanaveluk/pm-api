@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { MaterialRequisition } from '../material-requisition/entities/material-requisition.entity';
 import { WorkflowEvent } from './entities/workflow-event.entity';
+import { NotificationModule } from '../notification/notification.module';
 import { WorkflowTrackingService } from './workflow-tracking.service';
 import { WorkflowLockService } from './workflow-lock.service';
 import { WorkflowTrackingController } from './workflow-tracking.controller';
@@ -12,7 +13,7 @@ import { WorkflowTrackingController } from './workflow-tracking.controller';
  * the procurement cycle.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([WorkflowEvent, MaterialRequisition])],
+  imports: [TypeOrmModule.forFeature([WorkflowEvent, MaterialRequisition]), NotificationModule],
   providers:   [WorkflowTrackingService, WorkflowLockService],
   controllers: [WorkflowTrackingController],
   exports:     [WorkflowTrackingService, WorkflowLockService],

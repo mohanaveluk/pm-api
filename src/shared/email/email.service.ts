@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { createTransport } from 'nodemailer';
@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { CustomLoggerService } from 'src/modules/logger/custom-logger.service';
 import { EmailHistory } from './entities/email-history.entity';
 import { EMAIL_PROVIDER_SMTP, EmailStatus, EmailType } from './enums/email.enums';
+import { NotificationService } from 'src/modules/notification/notification.service';
 
 export interface SendEmailOptions {
   to: string | string[];
@@ -47,6 +48,8 @@ export class EmailService {
   constructor(
     @InjectRepository(EmailHistory) private readonly historyRepo: Repository<EmailHistory>,
     private readonly logger: CustomLoggerService,
+    // Every recorded email also appears in the recipients' in-app notifications.
+    @Optional() private readonly notifications?: NotificationService,
   ) {
     this.transporter = createTransport({
       host: process.env.SMTP_HOST,
@@ -84,6 +87,7 @@ export class EmailService {
         sentAt: new Date(),
         providerMessageId: info?.messageId ?? null,
       });
+      await this.notifyRecipients(history);
       return true;
     } catch (error) {
       console.error('Email sending failed:', error);
@@ -91,6 +95,8 @@ export class EmailService {
         status: EmailStatus.FAILED,
         errorMessage: error instanceof Error ? error.message : String(error),
       });
+      // The message still reaches the user in the application even if the mail did not.
+      await this.notifyRecipients(history);
       return false;
     }
   }
@@ -127,8 +133,21 @@ export class EmailService {
     }
   }
 
+  private async notifyRecipients(history: EmailHistory | null): Promise<void> {
+    if (!history || !this.notifications) return;
+    try {
+      await this.notifications.fromEmail(history);
+    } catch (err) {
+      this.logger.error(
+        `Could not create notifications for email ${history.guid}: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
+  }
+
   private async recordOutcome(history: EmailHistory | null, outcome: Partial<EmailHistory>): Promise<void> {
     if (!history) return;
+    Object.assign(history, outcome);
     try {
       await this.historyRepo.update({ id: history.id }, outcome);
     } catch (err) {

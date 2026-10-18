@@ -13,6 +13,7 @@ import { MaterialRequisitionParticipant } from './entities/material-requisition-
 import { User } from '../user/entity/user.entity';
 import { EmailModule } from 'src/shared/email/email.module';
 import { WorkflowTrackingModule } from '../workflow-tracking/workflow-tracking.module';
+import { NotificationModule } from '../notification/notification.module';
 import { MaterialRequisitionWorkflowService } from './material-requisition-workflow.service';
 import { MaterialRequisitionNotificationService } from './material-requisition-notification.service';
 import { MaterialRequisitionService } from './material-requisition.service';
@@ -35,6 +36,8 @@ import { MaterialRequisitionController } from './material-requisition.controller
     EmailModule,
     // trackingId + workflow timeline shared with RFQ, PO and later stages.
     WorkflowTrackingModule,
+    // Says who is concerned by each requisition step (in-app notifications).
+    NotificationModule,
   ],
   providers: [
     MasterCodeService, CloudStorageService, MaterialRequisitionService,

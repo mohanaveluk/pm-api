@@ -581,7 +581,21 @@ export class MaterialRequisitionService {
     mr.isDeleted = true;
     mr.deletedAt = new Date();
     mr.deletedBy = deletedBy;
-    await this.mrRepo.save(mr);
+    await this.mrRepo.manager.transaction(async (manager) => {
+      await this.workflow.ensureTrackingId(manager, mr);
+      await manager.save(MaterialRequisition, mr);
+      await this.tracking.record({
+        organizationId,
+        trackingId: mr.trackingId,
+        entityType: WorkflowEntityType.MATERIAL_REQUISITION,
+        entityId: mr.id,
+        entityReference: mr.mrNumber,
+        action: WorkflowAction.DELETED,
+        fromStatus: mr.status,
+        toStatus: 'DELETED',
+        actor: { email: deletedBy, name: deletedBy },
+      }, manager);
+    });
   }
 
   // ── Documents ────────────────────────────────────────────────────

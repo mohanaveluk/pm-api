@@ -20,4 +20,39 @@ describe('WorkflowTrackingService', () => {
       entityId: 'mr-1', action: 'UPDATED' as any,
     })).rejects.toThrow('has no tracking id');
   });
+
+  describe('track', () => {
+    const setup = () => {
+      const manager: any = {
+        update: jest.fn(async () => ({})),
+        create: jest.fn((_e: any, v: any) => v),
+        save: jest.fn(async (_e: any, v: any) => ({ id: 'ev-1', ...v })),
+      };
+      const notifications = { fromWorkflowEvent: jest.fn(async () => 1) };
+      const svc = new WorkflowTrackingService({ manager } as any, { error: jest.fn() } as any, notifications as any);
+      return { svc, manager, notifications };
+    };
+    class Vendor {}
+
+    it('gives a record its tracking id on the first step, then records and announces it', async () => {
+      const t = setup();
+      const vendor = { id: 'v-1', organizationId: 'org-1', trackingId: null as string | null };
+      await t.svc.track(Vendor, vendor, { entityType: 'VENDOR' as any, action: 'STATUS_CHANGED' as any, toStatus: 'INACTIVE' }, t.manager);
+
+      expect(vendor.trackingId).toMatch(/^TRK-/);
+      expect(t.manager.update).toHaveBeenCalledWith(Vendor, { id: 'v-1' }, { trackingId: vendor.trackingId });
+      expect(t.manager.save.mock.calls[0][1]).toMatchObject({
+        organizationId: 'org-1', trackingId: vendor.trackingId, entityId: 'v-1', toStatus: 'INACTIVE',
+      });
+      expect(t.notifications.fromWorkflowEvent).toHaveBeenCalled();
+    });
+
+    it('keeps an existing tracking id', async () => {
+      const t = setup();
+      const vendor = { id: 'v-1', organizationId: 'org-1', trackingId: 'TRK-EXISTING' };
+      await t.svc.track(Vendor, vendor, { entityType: 'VENDOR' as any, action: 'UPDATED' as any }, t.manager);
+      expect(t.manager.update).not.toHaveBeenCalled();
+      expect(t.manager.save.mock.calls[0][1].trackingId).toBe('TRK-EXISTING');
+    });
+  });
 });

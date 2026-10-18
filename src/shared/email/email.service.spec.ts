@@ -9,19 +9,20 @@ function setup(options: { sendFails?: boolean; historyFails?: boolean } = {}) {
     save: jest.fn(async (v: any) => {
       if (options.historyFails) throw new Error('db down');
       const row = { ...v, id: 42 };
-      saved.push(row);
+      saved.push({ ...row }); // as written: the service updates its own copy afterwards
       return row;
     }),
     update: jest.fn(async (where: any, values: any) => { updates.push({ where, values }); }),
   };
   const logger = { error: jest.fn(), warn: jest.fn(), log: jest.fn() };
-  const service = new EmailService(repo as any, logger as any);
+  const notifications = { fromEmail: jest.fn(async () => 1) };
+  const service = new EmailService(repo as any, logger as any, notifications as any);
   const sendMail = jest.fn(async () => {
     if (options.sendFails) throw new Error('SMTP refused');
     return { messageId: '<abc@smtp>' };
   });
   (service as any).transporter = { sendMail };
-  return { service, saved, updates, sendMail, logger };
+  return { service, saved, updates, sendMail, logger, notifications };
 }
 
 const base = {
@@ -63,6 +64,12 @@ describe('EmailService', () => {
       where: { id: 42 },
       values: expect.objectContaining({ status: EmailStatus.SENT, providerMessageId: '<abc@smtp>', sentAt: expect.any(Date) }),
     });
+  });
+
+  it("puts the sent email in each recipient's notifications, with its final status", async () => {
+    const t = setup();
+    await t.service.sendEmail(base);
+    expect(t.notifications.fromEmail).toHaveBeenCalledWith(expect.objectContaining({ id: 42, status: EmailStatus.SENT }));
   });
 
   it('marks it failed with the reason when sending fails', async () => {

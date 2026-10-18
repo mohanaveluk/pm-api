@@ -12,9 +12,18 @@ export enum WorkflowEntityType {
   PURCHASE_ORDER       = 'PURCHASE_ORDER',
   GOODS_RECEIPT        = 'GOODS_RECEIPT',
   INVOICE              = 'INVOICE',
+  // Master data. Not part of a procurement cycle: each record has its own
+  // trackingId (materials.trackingId, vendors.trackingId) so its history and
+  // notifications read the same way.
+  MATERIAL             = 'MATERIAL',
+  VENDOR               = 'VENDOR',
 }
 
 // What happened. Free to grow as later stages are built.
+// Enable / disable / obsolete / hold / reopen are STATUS_CHANGED with
+// fromStatus → toStatus; decisions use their own action.
+// Both enums are MySQL ENUM columns: a new value needs an ALTER TABLE in any
+// database that is not synchronized (see the pm-conventions skill).
 export enum WorkflowAction {
   CREATED        = 'CREATED',
   UPDATED        = 'UPDATED',
@@ -28,6 +37,9 @@ export enum WorkflowAction {
   RETURNED       = 'RETURNED',
   REJECTED       = 'REJECTED',
   CANCELLED      = 'CANCELLED',
+  // A change that waits for someone else's decision (e.g. a vendor blacklist request).
+  REQUESTED      = 'REQUESTED',
+  DELETED        = 'DELETED',
   STATUS_CHANGED = 'STATUS_CHANGED',
   LOCKED         = 'LOCKED',
   NOTIFIED       = 'NOTIFIED',
