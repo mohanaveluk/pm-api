@@ -11,6 +11,7 @@ import { OPEN_PROJECT_STATUSES } from '../project/enums/project.enums';
 import {
   MasterCodeService,
   MasterSequenceKey,
+  WBS_COST_CODE_PAD_WIDTH,
 } from 'src/common/services/master-code.service';
 import { CustomLoggerService } from '../logger/custom-logger.service';
 import { WorkflowLockService } from '../workflow-tracking/workflow-lock.service';
@@ -58,7 +59,8 @@ export class WbsCostCodeService {
     if (dto.disciplineId) await this.assertDisciplineSelectable(organizationId, dto.disciplineId);
     if (dto.projectId) await this.assertProjectSelectable(organizationId, dto.projectId);
 
-    // code is server-generated: a per-organization sequence starting at 0001.
+    // code is server-generated: a per-organization sequence, 10 digits wide
+    // (0000000001, 0000000002, …) unlike the 4-digit codes of other masters.
     // Generation and insert share one transaction, under a row lock on the
     // counter, so concurrent creates cannot be handed the same number.
     const saved = await this.masterCodeService.withGeneratedCode(
@@ -75,6 +77,7 @@ export class WbsCostCodeService {
         });
         return queryRunner.manager.save(WbsCostCode, row);
       },
+      WBS_COST_CODE_PAD_WIDTH,
     ).catch(err => {
       this.logger.error(
         `Failed to create WBS / cost code "${dto.projectDetails}" in organization ${organizationId}: ${err instanceof Error ? err.message : String(err)}`,

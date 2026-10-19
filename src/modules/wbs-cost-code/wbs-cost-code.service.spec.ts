@@ -127,16 +127,16 @@ describe('WbsCostCodeService', () => {
   // ── Create ───────────────────────────────────────────────────────
 
   describe('create', () => {
-    it('generates 0001 for the first WBS / cost code in an organization', async () => {
+    it('generates a 10-digit 0000000001 for the first WBS / cost code in an organization', async () => {
       await service.create(ORG_A, { projectDetails: 'Unit 100' } as CreateWbsCostCodeDto, USER);
-      expect(harness.saved[0].code).toBe('0001');
+      expect(harness.saved[0].code).toBe('0000000001');
     });
 
     it('continues the organization sequence', async () => {
       await build(7);
       repo.findOne.mockResolvedValue(existingRow());
       await service.create(ORG_A, { projectDetails: 'Unit 200' } as CreateWbsCostCodeDto, USER);
-      expect(harness.saved[0].code).toBe('0008');
+      expect(harness.saved[0].code).toBe('0000000008');
     });
 
     it('uses the WBS_COST_CODE sequence key', async () => {
@@ -151,7 +151,7 @@ describe('WbsCostCodeService', () => {
 
     it('ignores a code supplied in the payload', async () => {
       await service.create(ORG_A, { projectDetails: 'Unit 100', code: 'X-1' } as any, USER);
-      expect(harness.saved[0].code).toBe('0001');
+      expect(harness.saved[0].code).toBe('0000000001');
     });
 
     it('stamps organization, audit and defaults', async () => {

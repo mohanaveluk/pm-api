@@ -16,7 +16,7 @@ import { RolesGuard } from 'src/common/guards/roles.guard';
 import { Roles } from 'src/common/decorators/roles.decorator';
 import { ResponseDto } from 'src/common/dto/response.dto';
 
-@ApiTags('WBS / Cost Codes')
+@ApiTags('WBS')
 @ApiBearerAuth('JWT-auth')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('wbs-cost-codes')
