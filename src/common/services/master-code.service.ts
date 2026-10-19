@@ -23,8 +23,10 @@ export enum MasterSequenceKey {
 }
 
 // Codes are zero-padded to this width: 0001, 0002, … Sequences beyond 9999
-// simply widen (10000) rather than wrapping or truncating.
-const CODE_PAD_WIDTH = 4;
+// simply widen (10000) rather than wrapping or truncating. A master can ask
+// for a wider code (WBS / cost codes use WBS_COST_CODE_PAD_WIDTH).
+export const CODE_PAD_WIDTH = 4;
+export const WBS_COST_CODE_PAD_WIDTH = 10;
 
 // Generates sequential, per-organization master codes.
 //
@@ -49,6 +51,7 @@ export class MasterCodeService {
     queryRunner: QueryRunner,
     organizationId: string,
     sequenceKey: MasterSequenceKey,
+    padWidth: number = CODE_PAD_WIDTH,
   ): Promise<string> {
     let counter = await queryRunner.manager.findOne(MasterCodeCounter, {
       where: { organizationId, sequenceKey },
@@ -86,7 +89,7 @@ export class MasterCodeService {
     counter.lastSequence = Number(counter.lastSequence) + 1;
     await queryRunner.manager.save(MasterCodeCounter, counter);
 
-    return String(counter.lastSequence).padStart(CODE_PAD_WIDTH, '0');
+    return String(counter.lastSequence).padStart(padWidth, '0');
   }
 
   // Convenience wrapper for services that have no transaction of their own:
@@ -97,13 +100,14 @@ export class MasterCodeService {
     organizationId: string,
     sequenceKey: MasterSequenceKey,
     work: (code: string, queryRunner: QueryRunner) => Promise<T>,
+    padWidth: number = CODE_PAD_WIDTH,
   ): Promise<T> {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
     try {
-      const code = await this.generateCode(queryRunner, organizationId, sequenceKey);
+      const code = await this.generateCode(queryRunner, organizationId, sequenceKey, padWidth);
       const result = await work(code, queryRunner);
       await queryRunner.commitTransaction();
       return result;
