@@ -24,6 +24,9 @@ const READERS = ['OrganizationAdmin', 'SuperAdmin', 'Manager', 'ProjectManager',
 const WRITERS = ['OrganizationAdmin', 'SuperAdmin', 'Manager', 'ProjectManager'];
 const ADMINS  = ['OrganizationAdmin', 'SuperAdmin'];
 
+// Non-administrators only see the projects they are mapped to, manage or created.
+const viewerOf = (req: any) => ({ userId: req.user.userId, email: req.user.email, role: req.user.role });
+
 @ApiTags('Projects')
 @ApiBearerAuth('JWT-auth')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -59,7 +62,7 @@ export class ProjectController {
     @Query() query: ProjectQueryDto,
     @Request() req: any,
   ): Promise<ResponseDto<ProjectListResponseDto>> {
-    return ResponseDto.success(await this.projectService.findAll(req.user.organizationId, query));
+    return ResponseDto.success(await this.projectService.findAll(req.user.organizationId, query, viewerOf(req)));
   }
 
   // ── GET /projects/active ───────────────────────────────────────────
@@ -71,7 +74,7 @@ export class ProjectController {
   })
   @ApiResponse({ status: 200, type: [ProjectOptionDto] })
   async findActive(@Request() req: any): Promise<ResponseDto<ProjectOptionDto[]>> {
-    return ResponseDto.success(await this.projectService.findActive(req.user.organizationId));
+    return ResponseDto.success(await this.projectService.findActive(req.user.organizationId, viewerOf(req)));
   }
 
   // ── GET /projects/project-managers ─────────────────────────────────
@@ -93,7 +96,7 @@ export class ProjectController {
     @Param('id', ParseUUIDPipe) id: string,
     @Request() req: any,
   ): Promise<ResponseDto<ProjectSummaryResponseDto>> {
-    return ResponseDto.success(await this.projectService.getSummary(req.user.organizationId, id));
+    return ResponseDto.success(await this.projectService.getSummary(req.user.organizationId, id, viewerOf(req)));
   }
 
   // ── GET /projects/:id ──────────────────────────────────────────────
@@ -107,7 +110,7 @@ export class ProjectController {
     @Param('id', ParseUUIDPipe) id: string,
     @Request() req: any,
   ): Promise<ResponseDto<ProjectResponseDto>> {
-    return ResponseDto.success(await this.projectService.findOne(req.user.organizationId, id));
+    return ResponseDto.success(await this.projectService.findOne(req.user.organizationId, id, viewerOf(req)));
   }
 
   // ── PUT /projects/:id ──────────────────────────────────────────────
@@ -126,6 +129,7 @@ export class ProjectController {
     @Body() dto: UpdateProjectDto,
     @Request() req: any,
   ): Promise<ResponseDto<ProjectResponseDto>> {
+    await this.projectService.assertVisible(req.user.organizationId, id, viewerOf(req));
     const project = await this.projectService.update(req.user.organizationId, id, dto, req.user.email);
     return ResponseDto.updated(project, 'Project updated successfully');
   }
@@ -148,6 +152,7 @@ export class ProjectController {
     @Body() dto: UpdateProjectStatusDto,
     @Request() req: any,
   ): Promise<ResponseDto<ProjectResponseDto>> {
+    await this.projectService.assertVisible(req.user.organizationId, id, viewerOf(req));
     const project = await this.projectService.updateStatus(req.user.organizationId, id, dto, req.user.email);
     return ResponseDto.updated(project, 'Project status updated');
   }

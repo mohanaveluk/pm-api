@@ -44,6 +44,12 @@ export class OrganizationService {
     private readonly logger: CustomLoggerService,
   ) {}
 
+  findAll(): Promise<Organization[]> {
+    return this.orgRepo.find({
+      order: { organizationName: 'ASC' },
+    });
+  }
+
   async register(dto: RegisterOrganizationDto, domain: string): Promise<{ success: boolean; message: string }> {
     const existing = await this.orgRepo.findOne({ where: { email: dto.email } });
     if (existing && existing.emailVerified) {

@@ -80,6 +80,7 @@ const DOCUMENT_LABELS: Record<string, string> = {
   INVOICE: 'Invoice',
   MATERIAL: 'Material',
   VENDOR: 'Vendor',
+  PROJECT_ASSIGNMENT: 'Project Access',
 };
 
 const ACTION_PHRASES: Record<string, string> = {
@@ -88,6 +89,7 @@ const ACTION_PHRASES: Record<string, string> = {
   SUBMITTED: 'submitted for review',
   RESUBMITTED: 'resubmitted for review',
   EDITED_IN_REVIEW: 'edited during review',
+  EDITED_IN_APPROVAL: 'edited during approval',
   REVIEWED: 'reviewed',
   APPROVED: 'approved',
   RETURNED: 'returned for clarification',
@@ -95,6 +97,8 @@ const ACTION_PHRASES: Record<string, string> = {
   CANCELLED: 'cancelled',
   REQUESTED: 'sent for approval',
   DELETED: 'deleted',
+  ASSIGNED: 'granted',
+  UNASSIGNED: 'revoked',
   STATUS_CHANGED: 'status changed',
   LOCKED: 'locked',
 };
@@ -109,8 +113,8 @@ const DOCUMENT_EMAIL = /MATERIAL_REQUISITION|VENDOR|RFQ|(^|_)PO(_|$)/;
 const statusText = (s: string | null) => (s ? humanizeType(s) : '');
 
 function severityFor(type: string): NotificationSeverity {
-  if (/(^|_)(REJECT|REJECTED|CANCEL|CANCELLED|BLOCK|BLACKLISTED|DELETED|INACTIVE|DISABLED|OBSOLETE|HOLD)(_|$)/.test(type)) return NotificationSeverity.WARNING;
-  if (/(^|_)(APPROVE|APPROVED|REVIEWED|UNBLOCK|ACTIVATED|ACTIVE)(_|$)/.test(type)) return NotificationSeverity.SUCCESS;
+  if (/(^|_)(REJECT|REJECTED|CANCEL|CANCELLED|BLOCK|BLACKLISTED|DELETED|INACTIVE|DISABLED|OBSOLETE|HOLD|UNASSIGNED)(_|$)/.test(type)) return NotificationSeverity.WARNING;
+  if (/(^|_)(APPROVE|APPROVED|REVIEWED|UNBLOCK|ACTIVATED|ACTIVE|ASSIGNED)(_|$)/.test(type)) return NotificationSeverity.SUCCESS;
   return NotificationSeverity.INFO;
 }
 
@@ -124,6 +128,8 @@ function linkFor(referenceType: string | null, referenceId: string | null): stri
       return `/material-requisitions/${referenceId}`;
     case 'MATERIAL':
       return `/admin/materials/${referenceId}`;
+    case 'PROJECT_ASSIGNMENT':
+      return `/projects/${referenceId}`;
     case 'VENDOR':
       return `/vendors/${referenceId}/view`;
     case 'RFQ':

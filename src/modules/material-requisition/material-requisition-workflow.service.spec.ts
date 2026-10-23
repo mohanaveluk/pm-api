@@ -366,6 +366,29 @@ describe('MaterialRequisitionWorkflowService', () => {
       await expect(service.approve(ORG, MR_ID, A1, { decision: RequisitionDecision.APPROVED }))
         .rejects.toThrow('locked');
     });
+
+    it('needs comments from an approver who edited the requisition', async () => {
+      participants[2].editedInRound = true;
+      await expect(service.approve(ORG, MR_ID, A1, { decision: RequisitionDecision.APPROVED }))
+        .rejects.toThrow('describe your changes');
+      await service.approve(ORG, MR_ID, A1, { decision: RequisitionDecision.APPROVED, comments: 'Raised line 2 to 40 m' });
+      expect(mr.status).toBe(MaterialRequisitionStatus.APPROVED);
+    });
+
+    it("records an approver's edit as an approval step", async () => {
+      const approver = participants[2];
+      manager.findOne.mockImplementation(async (entity: any) =>
+        entity === MaterialRequisitionParticipant ? approver : entity === MaterialRequisition ? mr : null);
+      await service.markParticipantEdit(manager, mr, A1);
+
+      expect(approver.editedInRound).toBe(true);
+      expect(tracking.record).toHaveBeenCalledWith(expect.objectContaining({
+        entityType: 'MR_APPROVAL', action: 'EDITED_IN_APPROVAL',
+      }), manager);
+      expect(manager.findOne).toHaveBeenCalledWith(MaterialRequisitionParticipant, {
+        where: expect.objectContaining({ role: RequisitionParticipantRole.APPROVER, userId: A1.userId }),
+      });
+    });
   });
 
   describe('permissions', () => {
@@ -373,6 +396,23 @@ describe('MaterialRequisitionWorkflowService', () => {
       const full = { ...mr, participants } as MaterialRequisition;
       expect(service.permissionsFor(full, R1)).toMatchObject({ canEdit: true, canReview: true, canApprove: false });
       expect(service.permissionsFor(full, A1)).toMatchObject({ canEdit: false, canReview: false, canApprove: false });
+    });
+
+    it('lets a pending approver edit while reviewed — and nobody once approved', () => {
+      const reviewed = { ...requisition({ status: MaterialRequisitionStatus.REVIEWED }), participants } as MaterialRequisition;
+      expect(service.permissionsFor(reviewed, A1)).toMatchObject({ canEdit: true, canApprove: true });
+      // The review is done: reviewers can no longer edit, nor can the requester.
+      expect(service.permissionsFor(reviewed, R1)).toMatchObject({ canEdit: false });
+      expect(service.permissionsFor(reviewed, { ...REQUESTER, role: 'User' })).toMatchObject({ canEdit: false });
+
+      const decided = participants.map((p) => (p.userId === A1.userId ? { ...p, decision: RequisitionDecision.APPROVED } : p));
+      expect(service.permissionsFor({ ...reviewed, participants: decided } as MaterialRequisition, A1))
+        .toMatchObject({ canEdit: false });
+
+      const approved = { ...requisition({ status: MaterialRequisitionStatus.APPROVED }), participants } as MaterialRequisition;
+      for (const who of [A1, R1, REQUESTER]) {
+        expect(service.permissionsFor(approved, who).canEdit).toBe(false);
+      }
     });
 
     it('lets the requester edit and resubmit a returned requisition', () => {

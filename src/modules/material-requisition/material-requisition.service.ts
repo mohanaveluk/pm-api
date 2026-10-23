@@ -1,5 +1,5 @@
 import {
-  BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException,
+  BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
@@ -9,6 +9,7 @@ import * as ExcelJS from 'exceljs';
 import { MasterCodeService, MasterSequenceKey } from 'src/common/services/master-code.service';
 import { CloudStorageService } from 'src/common/services/cloud-storage.service';
 import { CustomLoggerService } from '../logger/custom-logger.service';
+import { UserProjectAccessService } from '../user-project-mapping/user-project-access.service';
 import { Material } from '../material/entities/material.entity';
 import { MaterialStatus } from '../material/enums/material-status.enum';
 import { Project } from '../project/entities/project.entity';
@@ -85,6 +86,8 @@ export class MaterialRequisitionService {
     private readonly tracking: WorkflowTrackingService,
     private readonly cloudStorageService: CloudStorageService,
     private readonly logger: CustomLoggerService,
+    // A requisition is raised only on a project the requester can see.
+    @Optional() private readonly projectAccess?: UserProjectAccessService,
   ) {}
 
   // ── Create ───────────────────────────────────────────────────────
@@ -97,7 +100,7 @@ export class MaterialRequisitionService {
     const submit = dto.submit === true;
     const createdBy = actor.email;
 
-    await this.assertProjectUsable(organizationId, dto.projectId);
+    await this.assertProjectUsable(organizationId, dto.projectId, actor);
     if (dto.wbsCostCodeId) await this.assertWbsBelongsToProject(organizationId, dto.wbsCostCodeId, dto.projectId);
 
     const lines = await this.resolveLines(organizationId, dto.items ?? []);
@@ -342,17 +345,19 @@ export class MaterialRequisitionService {
       throw new ForbiddenException('You cannot edit this requisition');
     }
 
-    // An Under Review requisition is already submitted: it is corrected in
-    // place (by its requester or an assigned reviewer), keeps its status and
-    // submission stamp, and must stay submittable.
-    const underReview = mr.status === MaterialRequisitionStatus.UNDER_REVIEW;
+    // An Under Review or Reviewed requisition is already submitted: it is
+    // corrected in place (by its requester or a reviewer while under review, by
+    // an approver while reviewed), keeps its status and submission stamp, and
+    // must stay submittable.
+    const underReview = mr.status === MaterialRequisitionStatus.UNDER_REVIEW
+      || mr.status === MaterialRequisitionStatus.REVIEWED;
     const submit = dto.submit === true && SUBMITTABLE_REQUISITION_STATUSES.includes(mr.status);
     const mustBeSubmittable = submit || underReview;
 
 
     const projectId = dto.projectId ?? mr.projectId;
     if (dto.projectId && dto.projectId !== mr.projectId) {
-      await this.assertProjectUsable(organizationId, dto.projectId);
+      await this.assertProjectUsable(organizationId, dto.projectId, actor);
     }
 
     // Changing the project invalidates the WBS / cost code picked for the old one.
@@ -412,7 +417,7 @@ export class MaterialRequisitionService {
           settled = await this.workflow.settleRound(manager, mr, actor);
           if (settled) await manager.save(MaterialRequisition, mr);
         }
-        if (underReview) await this.workflow.markReviewerEdit(manager, mr, actor);
+        if (underReview) await this.workflow.markParticipantEdit(manager, mr, actor);
         // Drafts change freely; once submitted, every edit is part of the record.
         if (mr.status !== MaterialRequisitionStatus.DRAFT) {
           await this.tracking.record({
@@ -816,7 +821,7 @@ export class MaterialRequisitionService {
     }
     if (!EDITABLE_REQUISITION_STATUSES.includes(mr.status)) {
       throw new ConflictException(
-        'Only a draft, a returned requisition or one under review can be edited.',
+        'Only a draft, a returned requisition, or one waiting for review or approval can be edited. An approved requisition is locked.',
       );
     }
     return mr;
@@ -833,11 +838,21 @@ export class MaterialRequisitionService {
     return mr;
   }
 
-  private async assertProjectUsable(organizationId: string, projectId: string): Promise<void> {
+  private async assertProjectUsable(
+    organizationId: string,
+    projectId: string,
+    actor?: RequisitionActor,
+  ): Promise<void> {
     const project = await this.projectRepo.findOne({
       where: { id: projectId, organizationId, isDeleted: false },
     });
     if (!project) throw new BadRequestException('Selected project was not found');
+    // Only on a project the requester is mapped to (or manages / created).
+    if (actor && this.projectAccess && !(await this.projectAccess.canSee(organizationId, project, {
+      userId: actor.userId, email: actor.email, role: actor.role,
+    }))) {
+      throw new BadRequestException('Selected project was not found');
+    }
     if (!OPEN_PROJECT_STATUSES.includes(project.status)) {
       throw new BadRequestException('Selected project is closed (completed or cancelled)');
     }

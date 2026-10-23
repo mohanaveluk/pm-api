@@ -24,6 +24,23 @@ export class OrganizationController {
   constructor(private readonly orgService: OrganizationService) {}
 
   @Public()
+  @Get()
+  @ApiOperation({
+    summary: 'List organizations',
+    description: 'Public endpoint. Returns organization IDs, codes, and names.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Organizations',
+    schema: {
+      example: [{ id: 'uuid', organizationCode: 'ORG-001', organizationName: 'Example Organization' }],
+    },
+  })
+  findAll() {
+    return this.orgService.findAll();
+  }
+
+  @Public()
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Register a new organization', description: 'Creates a pending organization and sends OTP to email' })
