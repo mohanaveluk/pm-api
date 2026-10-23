@@ -531,11 +531,19 @@ export class MaterialRequisitionWorkflowService implements OnModuleInit {
     });
   }
 
-  /** A reviewer changed the requisition: their decision must then explain it. */
-  async markReviewerEdit(manager: EntityManager, mr: MaterialRequisition, actor: RequisitionActor): Promise<void> {
-    if (mr.status !== MaterialRequisitionStatus.UNDER_REVIEW) return;
+  /**
+   * A reviewer (while under review) or an approver (while reviewed) changed the
+   * requisition: their decision must then explain it.
+   */
+  async markParticipantEdit(manager: EntityManager, mr: MaterialRequisition, actor: RequisitionActor): Promise<void> {
+    const approving = mr.status === MaterialRequisitionStatus.REVIEWED;
+    if (mr.status !== MaterialRequisitionStatus.UNDER_REVIEW && !approving) return;
     const me = await manager.findOne(MaterialRequisitionParticipant, {
-      where: { requisitionId: mr.id, role: RequisitionParticipantRole.REVIEWER, userId: actor.userId },
+      where: {
+        requisitionId: mr.id,
+        role: approving ? RequisitionParticipantRole.APPROVER : RequisitionParticipantRole.REVIEWER,
+        userId: actor.userId,
+      },
     });
     if (!me || me.decision) return;
     if (!me.editedInRound) {
@@ -546,10 +554,10 @@ export class MaterialRequisitionWorkflowService implements OnModuleInit {
     await this.tracking.record({
       organizationId: mr.organizationId,
       trackingId: mr.trackingId,
-      entityType: WorkflowEntityType.MR_REVIEW,
+      entityType: approving ? WorkflowEntityType.MR_APPROVAL : WorkflowEntityType.MR_REVIEW,
       entityId: mr.id,
       entityReference: mr.mrNumber,
-      action: WorkflowAction.EDITED_IN_REVIEW,
+      action: approving ? WorkflowAction.EDITED_IN_APPROVAL : WorkflowAction.EDITED_IN_REVIEW,
       round: mr.reviewRound,
       actor: this.trackingActor(actor),
     }, manager);
@@ -611,7 +619,7 @@ export class MaterialRequisitionWorkflowService implements OnModuleInit {
           `Add a comment explaining why the requisition is ${DECISION_VERB[decision]}`,
         );
       }
-      if (reviewing && me.editedInRound && !comments) {
+      if (me.editedInRound && !comments) {
         throw new BadRequestException('You edited this requisition — describe your changes in the comments');
       }
 
@@ -706,6 +714,8 @@ export class MaterialRequisitionWorkflowService implements OnModuleInit {
       canEdit: open && (
         ((s === MaterialRequisitionStatus.DRAFT || s === MaterialRequisitionStatus.RETURNED) && owner)
         || (s === MaterialRequisitionStatus.UNDER_REVIEW && (owner || pending(RequisitionParticipantRole.REVIEWER)))
+        // Approvers may correct it before they decide; approved is final.
+        || (s === MaterialRequisitionStatus.REVIEWED && pending(RequisitionParticipantRole.APPROVER))
       ),
       canSubmit: open && SUBMITTABLE_REQUISITION_STATUSES.includes(s) && owner,
       canReview: open && s === MaterialRequisitionStatus.UNDER_REVIEW && pending(RequisitionParticipantRole.REVIEWER),

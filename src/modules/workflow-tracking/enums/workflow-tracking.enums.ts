@@ -17,6 +17,8 @@ export enum WorkflowEntityType {
   // notifications read the same way.
   MATERIAL             = 'MATERIAL',
   VENDOR               = 'VENDOR',
+  // Users given or denied access to a project (entityId = the project).
+  PROJECT_ASSIGNMENT   = 'PROJECT_ASSIGNMENT',
 }
 
 // What happened. Free to grow as later stages are built.
@@ -30,6 +32,7 @@ export enum WorkflowAction {
   SUBMITTED      = 'SUBMITTED',
   RESUBMITTED    = 'RESUBMITTED',
   EDITED_IN_REVIEW = 'EDITED_IN_REVIEW',
+  EDITED_IN_APPROVAL = 'EDITED_IN_APPROVAL',
   REVIEWED       = 'REVIEWED',
   REVIEW_COMPLETED = 'REVIEW_COMPLETED',
   APPROVED       = 'APPROVED',
@@ -40,6 +43,9 @@ export enum WorkflowAction {
   // A change that waits for someone else's decision (e.g. a vendor blacklist request).
   REQUESTED      = 'REQUESTED',
   DELETED        = 'DELETED',
+  // Access given to / taken from users (project assignment).
+  ASSIGNED       = 'ASSIGNED',
+  UNASSIGNED     = 'UNASSIGNED',
   STATUS_CHANGED = 'STATUS_CHANGED',
   LOCKED         = 'LOCKED',
   NOTIFIED       = 'NOTIFIED',

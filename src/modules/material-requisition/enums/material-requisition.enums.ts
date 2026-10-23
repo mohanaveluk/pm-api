@@ -55,11 +55,14 @@ export const REQUISITION_STATUS_TRANSITIONS: Record<MaterialRequisitionStatus, M
   [MaterialRequisitionStatus.OBSOLETE]: [],
 };
 
-// Statuses whose content can still be changed (by the creator, or by a
-// reviewer while it is under review).
+// Statuses whose content can still be changed: by the creator (draft,
+// returned, under review), by a reviewer who has not decided yet (under
+// review) and by an approver who has not decided yet (reviewed). Once it is
+// approved its content is locked.
 export const EDITABLE_REQUISITION_STATUSES: readonly MaterialRequisitionStatus[] = [
   MaterialRequisitionStatus.DRAFT,
   MaterialRequisitionStatus.UNDER_REVIEW,
+  MaterialRequisitionStatus.REVIEWED,
   MaterialRequisitionStatus.RETURNED,
 ];
 

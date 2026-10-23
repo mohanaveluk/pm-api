@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { UserProjectMappingModule } from '../user-project-mapping/user-project-mapping.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { MasterCodeCounter } from 'src/common/entities/master-code-counter.entity';
 import { MasterCodeService } from 'src/common/services/master-code.service';
@@ -21,6 +22,8 @@ import { MaterialRequisitionController } from './material-requisition.controller
 
 @Module({
   imports: [
+    // Which projects a requester may raise requisitions on.
+    UserProjectMappingModule,
     TypeOrmModule.forFeature([
       MaterialRequisition,
       MaterialRequisitionItem,

@@ -25,6 +25,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { DepartmentModule } from './modules/department/department.module';
 import { DisciplineModule } from './modules/discipline/discipline.module';
 import { DepartmentDisciplineModule } from './modules/department-discipline/department-discipline.module';
+import { UserProjectMappingModule } from './modules/user-project-mapping/user-project-mapping.module';
 import { ActivityModule } from './modules/activity/activity.module';
 import { ServiceGroupModule } from './modules/service-group/service-group.module';
 import { ServiceGroupUserModule } from './modules/service-group-user/service-group-user.module';
@@ -77,6 +78,7 @@ import { User } from './modules/user/entity/user.entity';
     DepartmentModule,
     DisciplineModule,
     DepartmentDisciplineModule,
+    UserProjectMappingModule,
     ActivityModule,
     ServiceGroupModule,
     ServiceGroupUserModule,

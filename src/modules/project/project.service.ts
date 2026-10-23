@@ -1,5 +1,5 @@
 import {
-  BadRequestException, ConflictException, Injectable, NotFoundException,
+  BadRequestException, ConflictException, Injectable, NotFoundException, Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { MasterCodeService, MasterSequenceKey } from 'src/common/services/master-code.service';
 import { CustomLoggerService } from '../logger/custom-logger.service';
 import { WorkflowLockService } from '../workflow-tracking/workflow-lock.service';
+import { ProjectViewer, UserProjectAccessService } from '../user-project-mapping/user-project-access.service';
 import { Client } from '../client/entities/client.entity';
 import { ClientContact } from '../client/entities/client-contact.entity';
 import { ProjectType } from '../project-type/entity/project-type.entity';
@@ -56,6 +57,8 @@ export class ProjectService {
     private readonly masterCodeService: MasterCodeService,
     private readonly logger: CustomLoggerService,
     private readonly workflowLock: WorkflowLockService,
+    // Limits non-administrators to the projects they are mapped to, manage or created.
+    @Optional() private readonly access?: UserProjectAccessService,
   ) {}
 
   // ── Create ───────────────────────────────────────────────────────
@@ -111,7 +114,11 @@ export class ProjectService {
 
   // ── Read ─────────────────────────────────────────────────────────
 
-  async findAll(organizationId: string, query: ProjectQueryDto): Promise<ProjectListResponseDto> {
+  async findAll(
+    organizationId: string,
+    query: ProjectQueryDto,
+    viewer?: ProjectViewer,
+  ): Promise<ProjectListResponseDto> {
     const {
       search, status, clientId, projectTypeId, projectManagerId, countryCode,
       page = 1, limit = 20, sortBy = 'createdAt', sortOrder = 'DESC',
@@ -125,6 +132,7 @@ export class ProjectService {
       .where('p.organizationId = :organizationId', { organizationId })
       .andWhere('p.isDeleted = :isDeleted', { isDeleted: false });
 
+    this.access?.scope(qb, 'p', viewer);
     if (status)           qb.andWhere('p.status = :status', { status });
     if (clientId)         qb.andWhere('p.clientId = :clientId', { clientId });
     if (projectTypeId)    qb.andWhere('p.projectTypeId = :projectTypeId', { projectTypeId });
@@ -161,20 +169,29 @@ export class ProjectService {
     };
   }
 
-  async findOne(organizationId: string, id: string): Promise<ProjectResponseDto> {
-    return this.toResponse(await this.findEntityOrThrow(organizationId, id));
+  async findOne(organizationId: string, id: string, viewer?: ProjectViewer): Promise<ProjectResponseDto> {
+    const project = await this.findEntityOrThrow(organizationId, id);
+    await this.access?.assertCanSee(organizationId, project, viewer);
+    return this.toResponse(project);
+  }
+
+  /** 404 unless the viewer may see the project (before changing it). */
+  async assertVisible(organizationId: string, id: string, viewer?: ProjectViewer): Promise<void> {
+    const project = await this.findEntityOrThrow(organizationId, id, false);
+    await this.access?.assertCanSee(organizationId, project, viewer);
   }
 
   /** Open projects (planned, active, on hold) for dropdowns in other masters. */
-  async findActive(organizationId: string): Promise<ProjectOptionDto[]> {
-    const rows = await this.projectRepo
+  async findActive(organizationId: string, viewer?: ProjectViewer): Promise<ProjectOptionDto[]> {
+    const qb = this.projectRepo
       .createQueryBuilder('p')
       .leftJoinAndSelect('p.client', 'cl')
       .where('p.organizationId = :organizationId', { organizationId })
       .andWhere('p.isDeleted = :isDeleted', { isDeleted: false })
       .andWhere('p.status IN (:...open)', { open: OPEN_PROJECT_STATUSES })
-      .orderBy('p.code', 'ASC')
-      .getMany();
+      .orderBy('p.code', 'ASC');
+    this.access?.scope(qb, 'p', viewer);
+    const rows = await qb.getMany();
 
     return rows.map((p) => ({
       id: p.id,
@@ -198,8 +215,9 @@ export class ProjectService {
   }
 
   /** The project together with the master data it points at. */
-  async getSummary(organizationId: string, id: string): Promise<ProjectSummaryResponseDto> {
+  async getSummary(organizationId: string, id: string, viewer?: ProjectViewer): Promise<ProjectSummaryResponseDto> {
     const project = await this.findEntityOrThrow(organizationId, id);
+    await this.access?.assertCanSee(organizationId, project, viewer);
     const client = project.client;
 
     const primary = await this.contactRepo.findOne({

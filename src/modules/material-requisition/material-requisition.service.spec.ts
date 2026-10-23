@@ -140,7 +140,7 @@ describe('MaterialRequisitionService', () => {
         return { resubmitted: false };
       }),
       notifySubmitted: jest.fn(),
-      markReviewerEdit: jest.fn(async () => undefined),
+      markParticipantEdit: jest.fn(async () => undefined),
       permissionsFor: jest.fn(() => ({ canEdit: true, canSubmit: true, canReview: false, canApprove: false, myRoles: [] })),
       assertCanRead: jest.fn(),
       trackingActor: jest.fn((a: RequisitionActor) => ({ userId: a.userId, name: a.name, email: a.email })),
