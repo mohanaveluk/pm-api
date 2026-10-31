@@ -1,7 +1,7 @@
-import { Injectable, UnauthorizedException, BadRequestException, NotFoundException, InternalServerErrorException, HttpException, GoneException, ForbiddenException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException, NotFoundException, InternalServerErrorException, HttpException, GoneException, ForbiddenException, ConflictException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, Not } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 import { TokenService } from './token.service';
@@ -998,6 +998,54 @@ export class AuthService {
       }
       throw new InternalServerErrorException('Failed to update user status');
     }
+  }
+
+  /**
+   * Soft-deletes a user: is_active = 0 and is_deleted = 1. The row stays, so
+   * everything they created, reviewed or approved still shows who did it; they
+   * drop out of the user list and every picker, cannot sign in, and their
+   * existing sessions end. An administrator cannot delete themself, and an
+   * organization always keeps at least one active Organization Admin.
+   */
+  async deleteUser(
+    uguid: string,
+    requestingUser: { organizationId: string | null; role: string; userId: string },
+  ): Promise<{ message: string }> {
+    const user = await this.userRepository.findOne({
+      where: { uguid, is_deleted: false },
+      relations: ['role'],
+    });
+    if (!user) throw new NotFoundException('User not found');
+
+    if (requestingUser.role !== 'SuperAdmin' && requestingUser.organizationId !== user.organizationId) {
+      throw new ForbiddenException('Access denied to this organization');
+    }
+    if (user.id === requestingUser.userId) {
+      throw new BadRequestException('You cannot delete your own account');
+    }
+    if (user.role?.name === 'OrganizationAdmin' && user.organizationId) {
+      const otherAdmins = await this.userRepository.count({
+        where: {
+          organizationId: user.organizationId,
+          is_deleted: false,
+          is_active: 1,
+          role: { name: 'OrganizationAdmin' },
+          uguid: Not(uguid),
+        },
+      });
+      if (otherAdmins === 0) {
+        throw new ConflictException('This is the only active Organization Admin. Assign another one before deleting this user.');
+      }
+    }
+
+    user.is_active = 0;
+    user.is_deleted = true;
+    user.updated_at = new Date();
+    await this.userRepository.save(user);
+    // Any open session ends now rather than when its token expires.
+    await this.tokenService.revokeAllUserRefreshTokens(user.id);
+
+    return { message: `${[user.first_name, user.last_name].filter(Boolean).join(' ') || user.email} has been deleted` };
   }
 
 }

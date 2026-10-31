@@ -32,7 +32,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       relations: ['role']
     });
 
-    if (!user) {
+    if (!user || user.is_deleted) {
       throw new UnauthorizedException('User not found');
     }
 

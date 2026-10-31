@@ -14,6 +14,7 @@ import {
   HttpException,
   HttpStatus,
   Patch,
+  Delete,
   Param,
   Req,
   HttpCode
@@ -493,6 +494,25 @@ export class AuthController {
   ) {
     return this.authService.toggleStatus(uguid, toggleStatusDto.isActive, {
       organizationId: req.user.organizationId, role: req.user.role,
+    });
+  }
+
+  @Delete(':uguid')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SuperAdmin', 'OrganizationAdmin')
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Delete a user (soft delete)',
+    description: 'Sets is_active = 0 and is_deleted = 1 and ends the user\'s sessions. The record is kept for audit history.',
+  })
+  @ApiResponse({ status: 200, description: 'User deleted' })
+  @ApiResponse({ status: 400, description: 'You cannot delete your own account' })
+  @ApiResponse({ status: 403, description: 'User belongs to another organization' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  @ApiResponse({ status: 409, description: 'The user is the only active Organization Admin' })
+  async deleteUser(@Param('uguid') uguid: string, @Request() req) {
+    return this.authService.deleteUser(uguid, {
+      organizationId: req.user.organizationId, role: req.user.role, userId: req.user.userId,
     });
   }
 }
