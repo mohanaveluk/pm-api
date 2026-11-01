@@ -34,11 +34,11 @@ import {
 } from './dto/create-material-requisition.dto';
 import { UpdateMaterialRequisitionDto } from './dto/update-material-requisition.dto';
 import {
-  AssignedRequisitionQueryDto, MaterialRequisitionQueryDto, ProjectItemsQueryDto, RequisitionMaterialQueryDto,
+  AssignedRequisitionQueryDto, MaterialRequisitionQueryDto, ProjectItemsQueryDto, SourceProjectsQueryDto, RequisitionMaterialQueryDto,
 } from './dto/material-requisition-query.dto';
 import {
   BomColumnsDto, BomPreviewDto, BomRowIssueDto, MaterialRequisitionListItemDto,
-  MaterialRequisitionListResponseDto, MaterialRequisitionResponseDto, RequisitionCandidateDto,
+  MaterialRequisitionListResponseDto, MaterialRequisitionResponseDto, RequisitionCandidateDto, SourceProjectDto,
   RequisitionCandidateListDto, RequisitionDocumentResponseDto, RequisitionItemResponseDto,
   RequisitionParticipantResponseDto, RequisitionParticipantSummaryDto, RequisitionPermissionsDto,
   RequisitionWbsDto,
@@ -55,6 +55,12 @@ const SORT_COLUMNS: Record<string, string> = {
   createdAt:          'mr.createdAt',
   updatedAt:          'mr.updatedAt',
 };
+
+// Requisitions whose lines are not copied from: they were dropped or ended.
+const NOT_A_SOURCE_STATUSES = [
+  MaterialRequisitionStatus.CANCELLED, MaterialRequisitionStatus.REJECTED,
+  MaterialRequisitionStatus.OBSOLETE, MaterialRequisitionStatus.DISABLED,
+];
 
 const TEXT_FIELDS = [
   'budgetHead', 'shortDescription', 'mtoReference', 'pidReference', 'isometricReference', 'areaUnit', 'remarks',
@@ -664,10 +670,78 @@ export class MaterialRequisitionService {
   }
 
   /** Project source: materials already requisitioned on this project (or WBS). */
+  /**
+   * Other Projects source: the projects (other than the requisition's own) that
+   * have materials requisitioned on them, limited to the projects the user can
+   * see. Any project status — a completed project is a good template.
+   */
+  async getSourceProjects(
+    organizationId: string,
+    query: SourceProjectsQueryDto,
+    actor?: RequisitionActor,
+  ): Promise<SourceProjectDto[]> {
+    const qb = this.projectRepo
+      .createQueryBuilder('prj')
+      .innerJoin(MaterialRequisition, 'mr', 'mr.projectId = prj.id')
+      .innerJoin(MaterialRequisitionItem, 'i', 'i.requisitionId = mr.id')
+      .leftJoin('prj.client', 'cli')
+      .select('prj.id', 'id')
+      .addSelect('MAX(prj.code)', 'code')
+      .addSelect('MAX(prj.projectName)', 'projectName')
+      .addSelect('MAX(cli.clientName)', 'clientName')
+      .addSelect('MAX(prj.status)', 'status')
+      .addSelect('COUNT(DISTINCT i.materialId)', 'materialCount')
+      .addSelect('COUNT(DISTINCT mr.id)', 'requisitionCount')
+      .where('prj.organizationId = :organizationId', { organizationId })
+      .andWhere('prj.isDeleted = :no', { no: false })
+      .andWhere('mr.isDeleted = :no')
+      .andWhere('mr.status NOT IN (:...excluded)', { excluded: NOT_A_SOURCE_STATUSES })
+      .groupBy('prj.id')
+      .orderBy('code', 'ASC')
+      .limit(500);
+
+    if (query.excludeProjectId) qb.andWhere('prj.id <> :excludeProjectId', { excludeProjectId: query.excludeProjectId });
+    const term = query.search?.trim();
+    if (term) {
+      // Escape LIKE wildcards so a search for "50%" matches literally.
+      const like = `%${term.toLowerCase().replace(/[\\%_]/g, '\\$&')}%`;
+      qb.andWhere(
+        '(LOWER(prj.code) LIKE :like OR LOWER(prj.projectName) LIKE :like OR LOWER(cli.clientName) LIKE :like)',
+        { like },
+      );
+    }
+    if (actor) this.projectAccess?.scope(qb, 'prj', { userId: actor.userId, email: actor.email, role: actor.role });
+
+    const rows = await qb.getRawMany<{
+      id: string; code: string; projectName: string; clientName: string | null; status: string;
+      materialCount: string; requisitionCount: string;
+    }>();
+    return rows.map((r) => ({
+      id: r.id,
+      code: r.code,
+      projectName: r.projectName,
+      clientName: r.clientName ?? null,
+      status: r.status,
+      materialCount: Number(r.materialCount),
+      requisitionCount: Number(r.requisitionCount),
+    }));
+  }
+
   async getProjectItems(
     organizationId: string,
     query: ProjectItemsQueryDto,
+    actor?: RequisitionActor,
   ): Promise<RequisitionCandidateDto[]> {
+    // Only from a project the user can see.
+    if (actor && this.projectAccess) {
+      const project = await this.projectRepo.findOne({ where: { id: query.projectId, organizationId, isDeleted: false } });
+      if (!project || !(await this.projectAccess.canSee(organizationId, project, {
+        userId: actor.userId, email: actor.email, role: actor.role,
+      }))) {
+        throw new NotFoundException('Project not found');
+      }
+    }
+
     const qb = this.itemRepo
       .createQueryBuilder('i')
       .innerJoin('i.requisition', 'mr')
@@ -686,12 +760,7 @@ export class MaterialRequisitionService {
       .where('mr.organizationId = :organizationId', { organizationId })
       .andWhere('mr.isDeleted = :isDeleted', { isDeleted: false })
       .andWhere('mr.projectId = :projectId', { projectId: query.projectId })
-      .andWhere('mr.status NOT IN (:...excluded)', {
-        excluded: [
-          MaterialRequisitionStatus.CANCELLED, MaterialRequisitionStatus.REJECTED,
-          MaterialRequisitionStatus.OBSOLETE, MaterialRequisitionStatus.DISABLED,
-        ],
-      })
+      .andWhere('mr.status NOT IN (:...excluded)', { excluded: NOT_A_SOURCE_STATUSES })
       .andWhere('m.isDeleted = :materialDeleted', { materialDeleted: false })
       .andWhere('m.status = :active', { active: MaterialStatus.ACTIVE });
 

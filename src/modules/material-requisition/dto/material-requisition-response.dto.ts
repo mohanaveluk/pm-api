@@ -144,6 +144,17 @@ export class MaterialRequisitionListResponseDto {
 }
 
 /** A material offered for selection, from any source. */
+/** A project to copy materials from (Other Projects source). */
+export class SourceProjectDto {
+  @ApiProperty() id: string;
+  @ApiProperty() code: string;
+  @ApiProperty() projectName: string;
+  @ApiPropertyOptional() clientName: string | null;
+  @ApiProperty() status: string;
+  @ApiProperty({ description: 'Distinct materials requisitioned on it' }) materialCount: number;
+  @ApiProperty({ description: 'Requisitions those materials come from' }) requisitionCount: number;
+}
+
 export class RequisitionCandidateDto {
   @ApiProperty() materialId: string;
   @ApiProperty() code: string;
