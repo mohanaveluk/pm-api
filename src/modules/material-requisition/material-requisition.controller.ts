@@ -17,6 +17,7 @@ import { UpdateMaterialRequisitionDto } from './dto/update-material-requisition.
 import { UpdateMaterialRequisitionStatusDto } from './dto/update-material-requisition-status.dto';
 import {
   AssignedRequisitionQueryDto, MaterialRequisitionQueryDto, ProjectItemsQueryDto, RequisitionMaterialQueryDto,
+  SourceProjectsQueryDto,
 } from './dto/material-requisition-query.dto';
 import {
   ApproveRequisitionDto, ReviewRequisitionDto, UpdateRequisitionParticipantsDto,
@@ -28,7 +29,7 @@ import {
 } from './material-requisition-workflow.service';
 import {
   BomColumnsDto, BomPreviewDto, MaterialRequisitionListResponseDto,
-  MaterialRequisitionResponseDto, RequisitionCandidateDto, RequisitionCandidateListDto,
+  MaterialRequisitionResponseDto, RequisitionCandidateDto, SourceProjectDto, RequisitionCandidateListDto,
   RequisitionUserOptionDto,
 } from './dto/material-requisition-response.dto';
 
@@ -164,6 +165,20 @@ export class MaterialRequisitionController {
     return ResponseDto.success(await this.service.searchMaterials(req.user.organizationId, query));
   }
 
+  @Get('source-projects')
+  @Roles(...INTERNAL)
+  @ApiOperation({
+    summary: 'Other Projects source: projects with requisitioned materials',
+    description: 'Projects (any status) that have materials requisitioned on them, excluding the given one and limited to the projects the user can see.',
+  })
+  @ApiResponse({ status: 200, type: [SourceProjectDto] })
+  async getSourceProjects(
+    @Query() query: SourceProjectsQueryDto,
+    @Request() req: any,
+  ): Promise<ResponseDto<SourceProjectDto[]>> {
+    return ResponseDto.success(await this.service.getSourceProjects(req.user.organizationId, query, actorOf(req)));
+  }
+
   @Get('project-items')
   @Roles(...INTERNAL)
   @ApiOperation({
@@ -175,7 +190,7 @@ export class MaterialRequisitionController {
     @Query() query: ProjectItemsQueryDto,
     @Request() req: any,
   ): Promise<ResponseDto<RequisitionCandidateDto[]>> {
-    return ResponseDto.success(await this.service.getProjectItems(req.user.organizationId, query));
+    return ResponseDto.success(await this.service.getProjectItems(req.user.organizationId, query, actorOf(req)));
   }
 
   @Post('bom/columns')

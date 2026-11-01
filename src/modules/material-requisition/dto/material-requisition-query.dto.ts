@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsEnum, IsIn, IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
+import { IsBoolean, IsEnum, IsIn, IsInt, IsOptional, IsString, IsUUID, Min, MaxLength } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { MaterialRequisitionStatus, RequisitionParticipantRole } from '../enums/material-requisition.enums';
 
@@ -77,6 +77,17 @@ export class RequisitionMaterialQueryDto {
   @ApiPropertyOptional({ default: 25 })
   @IsOptional() @Type(() => Number) @IsInt() @Min(1)
   limit?: number = 25;
+}
+
+/** Other Projects source: projects whose requisitions can be copied from. */
+export class SourceProjectsQueryDto {
+  @ApiPropertyOptional({ description: 'The project of the requisition being written — left out of the list' })
+  @IsOptional() @IsUUID()
+  excludeProjectId?: string;
+
+  @ApiPropertyOptional({ description: 'Project code or name, or client' })
+  @IsOptional() @IsString() @MaxLength(200)
+  search?: string;
 }
 
 export class ProjectItemsQueryDto {
