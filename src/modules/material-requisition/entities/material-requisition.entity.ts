@@ -7,6 +7,8 @@ import { Project }      from '../../project/entities/project.entity';
 import { WbsCostCode }  from '../../wbs-cost-code/entity/wbs-cost-code.entity';
 import { MaterialRequisitionStatus } from '../enums/material-requisition.enums';
 import { MaterialRequisitionItem }     from './material-requisition-item.entity';
+import { MaterialRequisitionCompliance } from './material-requisition-compliance.entity';
+import { MaterialRequisitionDeviation } from './material-requisition-deviation.entity';
 import { MaterialRequisitionDocument } from './material-requisition-document.entity';
 import { MaterialRequisitionParticipant } from './material-requisition-participant.entity';
 
@@ -133,6 +135,12 @@ export class MaterialRequisition {
 
   @OneToMany(() => MaterialRequisitionDocument, (d) => d.requisition)
   documents: MaterialRequisitionDocument[];
+
+  @OneToMany(() => MaterialRequisitionCompliance, (c) => c.requisition)
+  compliances: MaterialRequisitionCompliance[];
+
+  @OneToMany(() => MaterialRequisitionDeviation, (d) => d.requisition)
+  deviations: MaterialRequisitionDeviation[];
 
   @OneToMany(() => MaterialRequisitionParticipant, (p) => p.requisition)
   participants: MaterialRequisitionParticipant[];

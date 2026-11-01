@@ -117,6 +117,24 @@ export class MaterialRequisitionListItemDto {
   @ApiProperty() updatedAt: Date;
 }
 
+export class RequisitionComplianceResponseDto {
+  @ApiProperty() id: string;
+  @ApiProperty({ description: 'Sr#' }) sequence: number;
+  @ApiProperty() requirement: string;
+  @ApiProperty() vendorResponse: string;
+  @ApiProperty() compliant: boolean;
+  @ApiPropertyOptional() remarks: string | null;
+}
+
+export class RequisitionDeviationResponseDto {
+  @ApiProperty() id: string;
+  @ApiProperty({ description: 'Sr#' }) sequence: number;
+  @ApiProperty() clauseNo: string;
+  @ApiProperty() rfqRequirement: string;
+  @ApiProperty() vendorDeviation: boolean;
+  @ApiPropertyOptional() justification: string | null;
+}
+
 export class MaterialRequisitionResponseDto extends MaterialRequisitionListItemDto {
   @ApiProperty() dguid: string;
   @ApiProperty() organizationId: string;
@@ -128,6 +146,8 @@ export class MaterialRequisitionResponseDto extends MaterialRequisitionListItemD
   @ApiPropertyOptional() remarks: string | null;
   @ApiProperty({ type: [RequisitionItemResponseDto] }) items: RequisitionItemResponseDto[];
   @ApiProperty({ type: [RequisitionDocumentResponseDto] }) documents: RequisitionDocumentResponseDto[];
+  @ApiProperty({ type: [RequisitionComplianceResponseDto] }) compliances: RequisitionComplianceResponseDto[];
+  @ApiProperty({ type: [RequisitionDeviationResponseDto] }) deviations: RequisitionDeviationResponseDto[];
   @ApiProperty({ type: [RequisitionParticipantResponseDto] }) participants: RequisitionParticipantResponseDto[];
   @ApiProperty({ type: [WorkflowEventResponseDto], description: 'Every step taken on this requisition, oldest first' })
   history: WorkflowEventResponseDto[];
