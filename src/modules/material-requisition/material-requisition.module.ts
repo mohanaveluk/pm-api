@@ -10,6 +10,8 @@ import { WbsCostCode } from '../wbs-cost-code/entity/wbs-cost-code.entity';
 import { MaterialRequisition } from './entities/material-requisition.entity';
 import { MaterialRequisitionItem } from './entities/material-requisition-item.entity';
 import { MaterialRequisitionDocument } from './entities/material-requisition-document.entity';
+import { MaterialRequisitionCompliance } from './entities/material-requisition-compliance.entity';
+import { MaterialRequisitionDeviation } from './entities/material-requisition-deviation.entity';
 import { MaterialRequisitionParticipant } from './entities/material-requisition-participant.entity';
 import { User } from '../user/entity/user.entity';
 import { EmailModule } from 'src/shared/email/email.module';
@@ -28,6 +30,8 @@ import { MaterialRequisitionController } from './material-requisition.controller
       MaterialRequisition,
       MaterialRequisitionItem,
       MaterialRequisitionDocument,
+      MaterialRequisitionCompliance,
+      MaterialRequisitionDeviation,
       MaterialRequisitionParticipant,
       User,
       Material,

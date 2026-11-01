@@ -215,6 +215,40 @@ describe('MaterialRequisitionService', () => {
       expect(harness.saved['MaterialRequisition'][0].shortDescription ?? null).toBeNull();
     });
 
+    it('stores compliance and deviation items in Sr# order, trimmed', async () => {
+      await service.create(ORG_A, base({
+        compliances: [
+          { requirement: ' ASTM A106 Gr. B ', vendorResponse: ' Confirmed ', compliant: true },
+          { requirement: 'Delivery 6 weeks', vendorResponse: '8 weeks', compliant: false, remarks: 'Partial shipment' },
+        ],
+        deviations: [
+          { clauseNo: ' 4.2.1 ', rfqRequirement: 'Hydrotest 1.5x', vendorDeviation: true },
+        ],
+      } as any), ACTOR);
+
+      expect(harness.saved['MaterialRequisitionCompliance']).toEqual([
+        expect.objectContaining({ sequence: 1, requirement: 'ASTM A106 Gr. B', vendorResponse: 'Confirmed', compliant: true, remarks: null }),
+        expect.objectContaining({ sequence: 2, compliant: false, remarks: 'Partial shipment' }),
+      ]);
+      expect(harness.saved['MaterialRequisitionDeviation']).toEqual([
+        expect.objectContaining({ sequence: 1, clauseNo: '4.2.1', vendorDeviation: true, justification: null }),
+      ]);
+    });
+
+    it('requires remarks for a non-compliant item and a justification when Vendor Deviation is not ticked', async () => {
+      await expect(service.create(ORG_A, base({
+        compliances: [{ requirement: 'R', vendorResponse: 'V', compliant: false, remarks: '  ' }],
+      } as any), ACTOR)).rejects.toThrow('Compliance item 1: remarks are required');
+
+      await expect(service.create(ORG_A, base({
+        deviations: [{ clauseNo: '1.1', rfqRequirement: 'R', vendorDeviation: false }],
+      } as any), ACTOR)).rejects.toThrow('Deviation item 1: a justification is required');
+
+      await expect(service.create(ORG_A, base({
+        compliances: [{ requirement: ' ', vendorResponse: 'V', compliant: true }],
+      } as any), ACTOR)).rejects.toThrow('enter the requirement');
+    });
+
     it('stores a supplied MR number instead of the code, and a blank one falls back to the code', async () => {
       await service.create(ORG_A, base({ mrNumber: ' MR-2026-0001 ' }), ACTOR);
       expect(harness.saved['MaterialRequisition'][0].mrNumber).toBe('MR-2026-0001');

@@ -18,6 +18,8 @@ import { WbsCostCode } from '../wbs-cost-code/entity/wbs-cost-code.entity';
 import { MaterialRequisition } from './entities/material-requisition.entity';
 import { MaterialRequisitionItem } from './entities/material-requisition-item.entity';
 import { MaterialRequisitionDocument } from './entities/material-requisition-document.entity';
+import { MaterialRequisitionCompliance } from './entities/material-requisition-compliance.entity';
+import { MaterialRequisitionDeviation } from './entities/material-requisition-deviation.entity';
 import { MaterialRequisitionParticipant } from './entities/material-requisition-participant.entity';
 import {
   EDITABLE_REQUISITION_STATUSES, MaterialRequisitionStatus, REQUISITION_STATUS_TRANSITIONS,
@@ -30,7 +32,7 @@ import {
   MaterialRequisitionWorkflowService, ParticipantChange, RequisitionActor, SettledStatus,
 } from './material-requisition-workflow.service';
 import {
-  CreateMaterialRequisitionDto, RequisitionDocumentDto, RequisitionItemDto,
+  CreateMaterialRequisitionDto, RequisitionComplianceDto, RequisitionDeviationDto, RequisitionDocumentDto, RequisitionItemDto,
 } from './dto/create-material-requisition.dto';
 import { UpdateMaterialRequisitionDto } from './dto/update-material-requisition.dto';
 import {
@@ -111,6 +113,8 @@ export class MaterialRequisitionService {
 
     const lines = await this.resolveLines(organizationId, dto.items ?? []);
     const documents = this.resolveDocuments(dto.documents ?? []);
+    const compliances = this.resolveCompliances(dto.compliances ?? []);
+    const deviations = this.resolveDeviations(dto.deviations ?? []);
 
     const ros = dto.requiredOnSiteDate || null;
     this.assertRequiredOnSite(ros, submit);
@@ -151,6 +155,7 @@ export class MaterialRequisitionService {
         const header = await queryRunner.manager.save(MaterialRequisition, row);
 
         await this.writeChildren(queryRunner.manager, header, lines, documents, createdBy);
+        await this.replaceChecklists(queryRunner.manager, header, compliances, deviations, createdBy);
         await this.workflow.replaceParticipants(queryRunner.manager, header, dto.reviewerIds, dto.approverIds, actor);
         await this.tracking.record({
           organizationId,
@@ -318,9 +323,14 @@ export class MaterialRequisitionService {
         wbsCostCode: { discipline: { department: true } },
         items: true,
         documents: true,
+        compliances: true,
+        deviations: true,
         participants: true,
       },
-      order: { items: { lineNumber: 'ASC' }, documents: { uploadedAt: 'ASC' }, participants: { sequence: 'ASC' } },
+      order: {
+        items: { lineNumber: 'ASC' }, documents: { uploadedAt: 'ASC' }, participants: { sequence: 'ASC' },
+        compliances: { sequence: 'ASC' }, deviations: { sequence: 'ASC' },
+      },
     });
     if (!mr) throw new NotFoundException('Material requisition not found');
     if (actor) this.workflow.assertCanRead(mr, actor);
@@ -384,6 +394,8 @@ export class MaterialRequisitionService {
       ? await this.resolveLines(organizationId, dto.items)
       : null;
     const documents = dto.documents !== undefined ? this.resolveDocuments(dto.documents) : null;
+    const compliances = dto.compliances !== undefined ? this.resolveCompliances(dto.compliances) : null;
+    const deviations = dto.deviations !== undefined ? this.resolveDeviations(dto.deviations) : null;
 
     if (mustBeSubmittable) {
       const lineCount = lines ? lines.length : await this.itemRepo.count({ where: { requisitionId: id } });
@@ -418,6 +430,7 @@ export class MaterialRequisitionService {
         if (lines || documents) {
           await this.replaceChildren(manager, mr, lines, documents, updatedBy);
         }
+        await this.replaceChecklists(manager, mr, compliances, deviations, updatedBy);
         // Reviewers change until reviewed, approvers until approved (requester only).
         change = await this.workflow.replaceParticipants(manager, mr, dto.reviewerIds, dto.approverIds, actor);
         if (change.changed && !submit) {
@@ -1059,6 +1072,72 @@ export class MaterialRequisitionService {
     }
   }
 
+  /**
+   * Compliance items: requirement and vendor response are required, remarks
+   * too when the item is not compliant. Text is trimmed; Sr# follows the order sent.
+   */
+  private resolveCompliances(rows: RequisitionComplianceDto[]): ResolvedCompliance[] {
+    return rows.map((r, index) => {
+      const sr = index + 1;
+      const requirement = r.requirement?.trim() ?? '';
+      const vendorResponse = r.vendorResponse?.trim() ?? '';
+      const compliant = r.compliant === true;
+      const remarks = r.remarks?.trim() || null;
+      if (!requirement) throw new BadRequestException(`Compliance item ${sr}: enter the requirement`);
+      if (!vendorResponse) throw new BadRequestException(`Compliance item ${sr}: enter the vendor response`);
+      if (!compliant && !remarks) {
+        throw new BadRequestException(`Compliance item ${sr}: remarks are required when it is not compliant`);
+      }
+      return { sequence: sr, requirement, vendorResponse, compliant, remarks };
+    });
+  }
+
+  /**
+   * Deviation items: clause no. and RFQ requirement are required, justification
+   * too when Vendor Deviation is not ticked. Text is trimmed; Sr# follows the order sent.
+   */
+  private resolveDeviations(rows: RequisitionDeviationDto[]): ResolvedDeviation[] {
+    return rows.map((r, index) => {
+      const sr = index + 1;
+      const clauseNo = r.clauseNo?.trim() ?? '';
+      const rfqRequirement = r.rfqRequirement?.trim() ?? '';
+      const vendorDeviation = r.vendorDeviation === true;
+      const justification = r.justification?.trim() || null;
+      if (!clauseNo) throw new BadRequestException(`Deviation item ${sr}: enter the clause no.`);
+      if (!rfqRequirement) throw new BadRequestException(`Deviation item ${sr}: enter the RFQ requirement`);
+      if (!vendorDeviation && !justification) {
+        throw new BadRequestException(`Deviation item ${sr}: a justification is required when Vendor Deviation is not ticked`);
+      }
+      return { sequence: sr, clauseNo, rfqRequirement, vendorDeviation, justification };
+    });
+  }
+
+  /** Replaces the compliance / deviation items — each only when it was sent (null = unchanged). */
+  private async replaceChecklists(
+    manager: Repository<MaterialRequisition>['manager'],
+    header: MaterialRequisition,
+    compliances: ResolvedCompliance[] | null,
+    deviations: ResolvedDeviation[] | null,
+    userEmail: string,
+  ): Promise<void> {
+    if (compliances) {
+      await manager.delete(MaterialRequisitionCompliance, { requisitionId: header.id });
+      for (const c of compliances) {
+        await manager.save(MaterialRequisitionCompliance, manager.create(MaterialRequisitionCompliance, {
+          ...c, organizationId: header.organizationId, requisitionId: header.id, createdBy: userEmail,
+        }));
+      }
+    }
+    if (deviations) {
+      await manager.delete(MaterialRequisitionDeviation, { requisitionId: header.id });
+      for (const d of deviations) {
+        await manager.save(MaterialRequisitionDeviation, manager.create(MaterialRequisitionDeviation, {
+          ...d, organizationId: header.organizationId, requisitionId: header.id, createdBy: userEmail,
+        }));
+      }
+    }
+  }
+
   private async replaceChildren(
     manager: Repository<MaterialRequisition>['manager'],
     header: MaterialRequisition,
@@ -1297,12 +1376,40 @@ export class MaterialRequisitionService {
       remarks: mr.remarks ?? null,
       items,
       documents,
+      compliances: (mr.compliances ?? [])
+        .slice().sort((a, b) => a.sequence - b.sequence)
+        .map((c) => ({
+          id: c.id, sequence: c.sequence, requirement: c.requirement, vendorResponse: c.vendorResponse,
+          compliant: !!c.compliant, remarks: c.remarks ?? null,
+        })),
+      deviations: (mr.deviations ?? [])
+        .slice().sort((a, b) => a.sequence - b.sequence)
+        .map((d) => ({
+          id: d.id, sequence: d.sequence, clauseNo: d.clauseNo, rfqRequirement: d.rfqRequirement,
+          vendorDeviation: !!d.vendorDeviation, justification: d.justification ?? null,
+        })),
       participants,
       history,
       permissions,
       updatedBy: mr.updatedBy ?? null,
     };
   }
+}
+
+interface ResolvedCompliance {
+  sequence: number;
+  requirement: string;
+  vendorResponse: string;
+  compliant: boolean;
+  remarks: string | null;
+}
+
+interface ResolvedDeviation {
+  sequence: number;
+  clauseNo: string;
+  rfqRequirement: string;
+  vendorDeviation: boolean;
+  justification: string | null;
 }
 
 interface ResolvedLine {

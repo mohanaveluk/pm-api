@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   ArrayMaxSize, ArrayUnique, IsArray, IsBoolean, IsEnum, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString,
-  IsUUID, IsUrl, Matches, Max, MaxLength, Min, ValidateNested,
+  IsUUID, IsUrl, Matches, Max, MaxLength, Min, ValidateIf, ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { RequisitionDocumentType, RequisitionLineSource } from '../enums/material-requisition.enums';
@@ -59,6 +59,48 @@ export class RequisitionDocumentDto {
   @ApiPropertyOptional({ nullable: true })
   @IsOptional() @IsInt() @Min(0)
   fileSizeBytes?: number | null;
+}
+
+/** One compliance item. Remarks are required when it is not compliant. */
+export class RequisitionComplianceDto {
+  @ApiProperty({ example: 'Material to ASTM A106 Gr. B, seamless' })
+  @IsString() @IsNotEmpty({ message: 'Requirement is required' }) @MaxLength(2000)
+  requirement: string;
+
+  @ApiProperty({ example: 'Confirmed, mill certificates 3.1 provided' })
+  @IsString() @IsNotEmpty({ message: 'Vendor response is required' }) @MaxLength(2000)
+  vendorResponse: string;
+
+  @ApiPropertyOptional({ default: false })
+  @IsOptional() @IsBoolean()
+  compliant?: boolean;
+
+  @ApiPropertyOptional({ nullable: true, description: 'Required when compliant is false' })
+  @ValidateIf((o: RequisitionComplianceDto) => !o.compliant)
+  @IsString() @IsNotEmpty({ message: 'Remarks are required when the item is not compliant' })
+  @MaxLength(2000)
+  remarks?: string | null;
+}
+
+/** One deviation item. Justification is required when Vendor Deviation is not ticked. */
+export class RequisitionDeviationDto {
+  @ApiProperty({ example: '4.2.1' })
+  @IsString() @IsNotEmpty({ message: 'Clause No. is required' }) @MaxLength(50)
+  clauseNo: string;
+
+  @ApiProperty({ example: 'Hydrotest at 1.5 x design pressure' })
+  @IsString() @IsNotEmpty({ message: 'RFQ requirement is required' }) @MaxLength(2000)
+  rfqRequirement: string;
+
+  @ApiPropertyOptional({ default: false })
+  @IsOptional() @IsBoolean()
+  vendorDeviation?: boolean;
+
+  @ApiPropertyOptional({ nullable: true, description: 'Required when vendorDeviation is false' })
+  @ValidateIf((o: RequisitionDeviationDto) => !o.vendorDeviation)
+  @IsString() @IsNotEmpty({ message: 'Justification is required when Vendor Deviation is not ticked' })
+  @MaxLength(2000)
+  justification?: string | null;
 }
 
 export class CreateMaterialRequisitionDto {
@@ -133,6 +175,20 @@ export class CreateMaterialRequisitionDto {
   })
   @IsOptional() @IsArray() @ArrayMaxSize(50) @ValidateNested({ each: true }) @Type(() => RequisitionDocumentDto)
   documents?: RequisitionDocumentDto[];
+
+  @ApiPropertyOptional({
+    type: [RequisitionComplianceDto],
+    description: 'The complete set of compliance items, in Sr# order; the stored items are replaced by it.',
+  })
+  @IsOptional() @IsArray() @ArrayMaxSize(500) @ValidateNested({ each: true }) @Type(() => RequisitionComplianceDto)
+  compliances?: RequisitionComplianceDto[];
+
+  @ApiPropertyOptional({
+    type: [RequisitionDeviationDto],
+    description: 'The complete set of deviation items, in Sr# order; the stored items are replaced by it.',
+  })
+  @IsOptional() @IsArray() @ArrayMaxSize(500) @ValidateNested({ each: true }) @Type(() => RequisitionDeviationDto)
+  deviations?: RequisitionDeviationDto[];
 
   @ApiPropertyOptional({
     default: false,
