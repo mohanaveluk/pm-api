@@ -65,6 +65,10 @@ export class MaterialRequisition {
   @Column({ type: 'varchar', length: 100, nullable: true })
   budgetHead: string | null;
 
+  // What is being requisitioned, in a few words — shown in the list and emails.
+  @Column({ type: 'varchar', length: 200, nullable: true })
+  shortDescription: string | null;
+
   // Required on site (ROS) — required to submit.
   @Column({ type: 'date', nullable: true })
   requiredOnSiteDate: string | null;

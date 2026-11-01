@@ -57,7 +57,7 @@ const SORT_COLUMNS: Record<string, string> = {
 };
 
 const TEXT_FIELDS = [
-  'budgetHead', 'mtoReference', 'pidReference', 'isometricReference', 'areaUnit', 'remarks',
+  'budgetHead', 'shortDescription', 'mtoReference', 'pidReference', 'isometricReference', 'areaUnit', 'remarks',
 ] as const;
 
 const BOM_MAX_BYTES = 5 * 1024 * 1024;
@@ -207,7 +207,8 @@ export class MaterialRequisitionService {
       qb.andWhere(
         '(LOWER(mr.code) LIKE :like OR LOWER(mr.mrNumber) LIKE :like OR LOWER(mr.trackingId) LIKE :like ' +
         'OR LOWER(prj.code) LIKE :like OR LOWER(prj.projectName) LIKE :like ' +
-        'OR LOWER(cli.clientName) LIKE :like OR LOWER(mr.budgetHead) LIKE :like)',
+        'OR LOWER(cli.clientName) LIKE :like OR LOWER(mr.budgetHead) LIKE :like ' +
+        'OR LOWER(mr.shortDescription) LIKE :like)',
         { like },
       );
     }
@@ -1130,6 +1131,7 @@ export class MaterialRequisitionService {
       wbsCostCodeId: mr.wbsCostCodeId ?? null,
       wbsName: mr.wbsCostCode?.projectDetails ?? null,
       budgetHead: mr.budgetHead ?? null,
+      shortDescription: mr.shortDescription ?? null,
       requiredOnSiteDate: this.dateOnly(mr.requiredOnSiteDate),
       itemCount,
       reviewers: this.summarise(mr, RequisitionParticipantRole.REVIEWER),
@@ -1153,7 +1155,7 @@ export class MaterialRequisitionService {
     return (mr.participants ?? [])
       .filter((p) => p.role === role)
       .sort((a, b) => a.sequence - b.sequence)
-      .map((p) => ({ userId: p.userId, name: p.userName, decision: p.decision ?? null }));
+      .map((p) => ({ userId: p.userId, name: p.userName, email: p.userEmail, decision: p.decision ?? null }));
   }
 
   private toWbs(w: WbsCostCode | null | undefined): RequisitionWbsDto | null {

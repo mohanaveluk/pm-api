@@ -8,7 +8,7 @@ export const getDatabaseConfig = registerAs('database', (): DatabaseConfig => ({
   username: process.env.DB_USERNAME,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_DATABASE,
-  synchronize: process.env.NODE_ENV === 'development',
+  synchronize: process.env.NODE_ENV === 'production',
   logging: process.env.NODE_ENV === 'development',
   logger: 'advanced-console',
   migrationsRun: process.env.DB_MIGRATIONS_RUN === 'true',
