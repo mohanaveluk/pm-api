@@ -206,6 +206,15 @@ describe('MaterialRequisitionService', () => {
       );
     });
 
+    it('stores the short item description, trimmed, and a blank one as empty', async () => {
+      await service.create(ORG_A, base({ shortDescription: '  CS pipes for Unit 100  ' } as any), ACTOR);
+      expect(harness.saved['MaterialRequisition'][0].shortDescription).toBe('CS pipes for Unit 100');
+
+      await build(0);
+      await service.create(ORG_A, base({ shortDescription: '   ' } as any), ACTOR);
+      expect(harness.saved['MaterialRequisition'][0].shortDescription ?? null).toBeNull();
+    });
+
     it('stores a supplied MR number instead of the code, and a blank one falls back to the code', async () => {
       await service.create(ORG_A, base({ mrNumber: ' MR-2026-0001 ' }), ACTOR);
       expect(harness.saved['MaterialRequisition'][0].mrNumber).toBe('MR-2026-0001');

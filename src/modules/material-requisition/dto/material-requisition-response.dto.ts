@@ -23,6 +23,7 @@ export class RequisitionParticipantResponseDto {
 export class RequisitionParticipantSummaryDto {
   @ApiProperty() userId: string;
   @ApiProperty() name: string;
+  @ApiProperty() email: string;
   @ApiPropertyOptional({ enum: RequisitionDecision }) decision: RequisitionDecision | null;
 }
 
@@ -97,6 +98,7 @@ export class MaterialRequisitionListItemDto {
   @ApiPropertyOptional() wbsCostCodeId: string | null;
   @ApiPropertyOptional() wbsName: string | null;
   @ApiPropertyOptional() budgetHead: string | null;
+  @ApiPropertyOptional({ description: 'Short item description' }) shortDescription: string | null;
   @ApiPropertyOptional({ example: '2026-11-15' }) requiredOnSiteDate: string | null;
   @ApiProperty() itemCount: number;
   @ApiProperty({ type: [RequisitionParticipantSummaryDto] }) reviewers: RequisitionParticipantSummaryDto[];

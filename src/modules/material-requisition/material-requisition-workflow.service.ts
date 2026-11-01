@@ -281,13 +281,6 @@ export class MaterialRequisitionWorkflowService implements OnModuleInit {
     const nameOf = (id: string) => existing.find((p) => p.userId === id)?.userName
       ?? (users.get(id) ? this.userName(users.get(id)!) : id);
 
-    const both = reviewers.filter((id) => approvers.includes(id));
-    if (both.length) {
-      throw new BadRequestException(
-        `${both.map(nameOf).join(', ')} cannot be both a reviewer and an approver of the same requisition`,
-      );
-    }
-
     const write = async (role: RequisitionParticipantRole, wanted: string[]): Promise<string[]> => {
       const current = rows(role);
       const removed = current.filter((p) => !wanted.includes(p.userId));
@@ -301,17 +294,17 @@ export class MaterialRequisitionWorkflowService implements OnModuleInit {
           }
           continue;
         }
-        // Moving between roles: the old row goes, a pending one is created.
-        const moved = existing.find((p) => p.userId === id && p.role !== role);
-        if (moved) await manager.delete(MaterialRequisitionParticipant, { id: moved.id });
+        // Roles are independent: a person who also holds the other role keeps
+        // that row — the same person can review and approve.
+        const other = existing.find((p) => p.userId === id && p.role !== role);
         const u = users.get(id);
         await manager.save(MaterialRequisitionParticipant, manager.create(MaterialRequisitionParticipant, {
           organizationId: mr.organizationId,
           requisitionId: mr.id,
           role,
           userId: id,
-          userName: u ? this.userName(u) : moved?.userName ?? id,
-          userEmail: u?.email ?? moved?.userEmail ?? '',
+          userName: u ? this.userName(u) : other?.userName ?? id,
+          userEmail: u?.email ?? other?.userEmail ?? '',
           sequence: index + 1,
           assignedBy: actor.email,
         }));
@@ -784,7 +777,10 @@ export class MaterialRequisitionWorkflowService implements OnModuleInit {
     const byId = new Map(users.map((u) => [u.id, u]));
     for (const id of ids) {
       const u = byId.get(id);
-      if (!u || u.is_deleted) throw new BadRequestException('A selected reviewer or approver was not found');
+      if (!u) throw new BadRequestException('A selected reviewer or approver was not found');
+      if (u.is_deleted) {
+        throw new BadRequestException(`${this.userName(u)} has been deleted and cannot review or approve — remove them from the list`);
+      }
       if (Number(u.is_internal) !== 1 || u.role?.name === EXTERNAL_ROLE) {
         throw new BadRequestException(`${this.userName(u)} is not an internal user and cannot review or approve`);
       }

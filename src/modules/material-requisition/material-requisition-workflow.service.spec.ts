@@ -134,9 +134,29 @@ describe('MaterialRequisitionWorkflowService', () => {
         .rejects.toThrow('not an internal user');
     });
 
-    it('refuses the same user as reviewer and approver', async () => {
-      await expect(service.replaceParticipants(manager, mr, [R1.userId], [R1.userId], REQUESTER))
-        .rejects.toThrow('both a reviewer and an approver');
+    it('lets the same user be both a reviewer and an approver (one row per role)', async () => {
+      mr = requisition({ status: MaterialRequisitionStatus.DRAFT });
+      participants = [];
+      await service.replaceParticipants(manager, mr, [R1.userId], [R1.userId], REQUESTER);
+      const created = manager.create.mock.calls
+        .map((c: any[]) => c[1])
+        .filter((p: any) => p.userId === R1.userId);
+      expect(created.map((p: any) => p.role).sort()).toEqual(['APPROVER', 'REVIEWER']);
+    });
+
+    it('keeps an approver who is now also picked as a reviewer (and the other way round)', async () => {
+      mr = requisition({ status: MaterialRequisitionStatus.DRAFT });
+      participants = [participant(A1, RequisitionParticipantRole.APPROVER)];
+      await service.replaceParticipants(manager, mr, [A1.userId], [A1.userId], REQUESTER);
+
+      expect(manager.delete).not.toHaveBeenCalled();
+      expect(manager.create).toHaveBeenCalledWith(expect.anything(),
+        expect.objectContaining({ userId: A1.userId, role: RequisitionParticipantRole.REVIEWER }));
+
+      manager.delete.mockClear();
+      participants = [participant(R1, RequisitionParticipantRole.REVIEWER)];
+      await service.replaceParticipants(manager, mr, [R1.userId], [R1.userId], REQUESTER);
+      expect(manager.delete).not.toHaveBeenCalled();
     });
 
     it('lets the requester add a reviewer under review, keeping decisions already made', async () => {

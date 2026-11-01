@@ -82,6 +82,14 @@ export class CreateMaterialRequisitionDto {
   budgetHead?: string | null;
 
   @ApiPropertyOptional({
+    example: 'Carbon steel pipes and fittings for Unit 100 cooling water',
+    nullable: true,
+    description: 'Short item description — what is being requisitioned, in a few words',
+  })
+  @IsOptional() @IsString() @MaxLength(200)
+  shortDescription?: string | null;
+
+  @ApiPropertyOptional({
     example: '2026-11-15',
     description: 'Required on site (YYYY-MM-DD). Required to submit; not in the past.',
     nullable: true,
@@ -148,7 +156,7 @@ export class CreateMaterialRequisitionDto {
     type: [String],
     description:
       'Internal users who approve the requisition once it is reviewed. At least one is required to submit. ' +
-      'A user cannot be both a reviewer and an approver of the same requisition.',
+      'The same user may also be one of its reviewers.',
   })
   @IsOptional() @IsArray() @ArrayMaxSize(20) @ArrayUnique() @IsUUID('all', { each: true })
   approverIds?: string[];
