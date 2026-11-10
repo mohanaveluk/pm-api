@@ -6,6 +6,7 @@ export class WbsCostCodeResponseDto {
   @ApiProperty() organizationId: string;
   @ApiProperty({ example: '0001' }) code: string;
   @ApiProperty() projectDetails: string;
+  @ApiPropertyOptional() shortDescription: string | null;
   @ApiPropertyOptional() areaFacility: string | null;
   @ApiPropertyOptional() systemSubsystem: string | null;
   @ApiPropertyOptional() disciplineId: string | null;

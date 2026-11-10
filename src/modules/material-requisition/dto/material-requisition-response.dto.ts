@@ -121,7 +121,7 @@ export class RequisitionComplianceResponseDto {
   @ApiProperty() id: string;
   @ApiProperty({ description: 'Sr#' }) sequence: number;
   @ApiProperty() requirement: string;
-  @ApiProperty() vendorResponse: string;
+  @ApiPropertyOptional({ description: 'Vendor (RFQ)' }) vendorResponse: string | null;
   @ApiProperty() compliant: boolean;
   @ApiPropertyOptional() remarks: string | null;
 }

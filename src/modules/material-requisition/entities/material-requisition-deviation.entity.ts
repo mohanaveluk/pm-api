@@ -4,8 +4,9 @@ import {
 import { MaterialRequisition } from './material-requisition.entity';
 
 // One deviation item of a requisition: the RFQ clause, its requirement, whether
-// the vendor deviates, and the justification. Replaced as a set when the
-// requisition is saved; `sequence` is the Sr# shown on screen.
+// the vendor deviates, and the justification. Entered only by the vendor in the
+// Request for Quotation — the requisition's own create / update never writes
+// them; they are returned with the requisition for reference.
 @Entity('material_requisition_deviations')
 @Index('IDX_mrdv_requisition', ['requisitionId', 'sequence'])
 export class MaterialRequisitionDeviation {

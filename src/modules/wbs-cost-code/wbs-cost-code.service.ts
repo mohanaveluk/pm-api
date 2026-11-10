@@ -35,7 +35,7 @@ const SORT_COLUMNS: Record<string, string> = {
 
 // Free-text fields that are trimmed on the way in; blank becomes null so the
 // column never holds an empty string.
-const TEXT_FIELDS = ['areaFacility', 'systemSubsystem', 'workPackage', 'activities'] as const;
+const TEXT_FIELDS = ['shortDescription', 'areaFacility', 'systemSubsystem', 'workPackage', 'activities'] as const;
 
 @Injectable()
 export class WbsCostCodeService {
@@ -120,7 +120,7 @@ export class WbsCostCodeService {
       // Escape LIKE wildcards so a search for "50%" matches literally.
       const like = `%${term.toLowerCase().replace(/[\\%_]/g, '\\$&')}%`;
       qb.andWhere(
-        '(LOWER(w.code) LIKE :like OR LOWER(w.projectDetails) LIKE :like ' +
+        '(LOWER(w.code) LIKE :like OR LOWER(w.projectDetails) LIKE :like OR LOWER(w.shortDescription) LIKE :like ' +
         'OR LOWER(w.areaFacility) LIKE :like OR LOWER(w.systemSubsystem) LIKE :like ' +
         'OR LOWER(w.workPackage) LIKE :like OR LOWER(w.activities) LIKE :like ' +
         'OR LOWER(disc.name) LIKE :like ' +
@@ -280,6 +280,7 @@ export class WbsCostCodeService {
       organizationId:  w.organizationId,
       code:            w.code,
       projectDetails:  w.projectDetails,
+      shortDescription: w.shortDescription ?? null,
       areaFacility:    w.areaFacility ?? null,
       systemSubsystem: w.systemSubsystem ?? null,
       disciplineId:    w.disciplineId ?? null,
