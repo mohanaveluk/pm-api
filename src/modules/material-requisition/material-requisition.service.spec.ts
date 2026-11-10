@@ -215,38 +215,37 @@ describe('MaterialRequisitionService', () => {
       expect(harness.saved['MaterialRequisition'][0].shortDescription ?? null).toBeNull();
     });
 
-    it('stores compliance and deviation items in Sr# order, trimmed', async () => {
+    it('stores the compliance requirements in Sr# order, trimmed, keeping any vendor answers as sent', async () => {
       await service.create(ORG_A, base({
         compliances: [
-          { requirement: ' ASTM A106 Gr. B ', vendorResponse: ' Confirmed ', compliant: true },
+          { requirement: ' ASTM A106 Gr. B ' },
           { requirement: 'Delivery 6 weeks', vendorResponse: '8 weeks', compliant: false, remarks: 'Partial shipment' },
-        ],
-        deviations: [
-          { clauseNo: ' 4.2.1 ', rfqRequirement: 'Hydrotest 1.5x', vendorDeviation: true },
         ],
       } as any), ACTOR);
 
       expect(harness.saved['MaterialRequisitionCompliance']).toEqual([
-        expect.objectContaining({ sequence: 1, requirement: 'ASTM A106 Gr. B', vendorResponse: 'Confirmed', compliant: true, remarks: null }),
-        expect.objectContaining({ sequence: 2, compliant: false, remarks: 'Partial shipment' }),
-      ]);
-      expect(harness.saved['MaterialRequisitionDeviation']).toEqual([
-        expect.objectContaining({ sequence: 1, clauseNo: '4.2.1', vendorDeviation: true, justification: null }),
+        expect.objectContaining({ sequence: 1, requirement: 'ASTM A106 Gr. B', vendorResponse: null, compliant: false, remarks: null }),
+        expect.objectContaining({ sequence: 2, vendorResponse: '8 weeks', remarks: 'Partial shipment' }),
       ]);
     });
 
-    it('requires remarks for a non-compliant item and a justification when Vendor Deviation is not ticked', async () => {
+    it('requires only the requirement — the vendor fills the rest in the RFQ', async () => {
       await expect(service.create(ORG_A, base({
-        compliances: [{ requirement: 'R', vendorResponse: 'V', compliant: false, remarks: '  ' }],
-      } as any), ACTOR)).rejects.toThrow('Compliance item 1: remarks are required');
+        compliances: [{ requirement: ' ' }],
+      } as any), ACTOR)).rejects.toThrow('Compliance item 1: enter the requirement');
 
+      // Not compliant, no remarks: fine on the requisition.
+      await build(0);
       await expect(service.create(ORG_A, base({
-        deviations: [{ clauseNo: '1.1', rfqRequirement: 'R', vendorDeviation: false }],
-      } as any), ACTOR)).rejects.toThrow('Deviation item 1: a justification is required');
+        compliances: [{ requirement: 'R', compliant: false }],
+      } as any), ACTOR)).resolves.toBeDefined();
+    });
 
-      await expect(service.create(ORG_A, base({
-        compliances: [{ requirement: ' ', vendorResponse: 'V', compliant: true }],
-      } as any), ACTOR)).rejects.toThrow('enter the requirement');
+    it('never writes deviations — they are entered by the vendor', async () => {
+      await service.create(ORG_A, base({
+        deviations: [{ clauseNo: '4.2.1', rfqRequirement: 'Hydrotest 1.5x', vendorDeviation: true }],
+      } as any), ACTOR);
+      expect(harness.saved['MaterialRequisitionDeviation']).toBeUndefined();
     });
 
     it('stores a supplied MR number instead of the code, and a blank one falls back to the code', async () => {

@@ -75,7 +75,7 @@ export class DisciplineService {
     query: DisciplineQueryDto,
   ): Promise<DisciplineListResponseDto> {
     const {
-      search, isActive, page = 1, limit = 20,
+      search, isActive, departmentId, page = 1, limit = 20,
       sortBy = 'displayOrder', sortOrder = 'ASC',
     } = query;
 
@@ -96,6 +96,9 @@ export class DisciplineService {
 
     if (isActive !== undefined) {
       where.forEach(w => (w.isActive = isActive));
+    }
+    if (departmentId) {
+      where.forEach(w => (w.departmentId = departmentId));
     }
 
     const [items, total] = await this.deptRepo.findAndCount({

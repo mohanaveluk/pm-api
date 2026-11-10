@@ -3,9 +3,10 @@ import {
 } from 'typeorm';
 import { MaterialRequisition } from './material-requisition.entity';
 
-// One compliance item of a requisition: a requirement, what the vendor said,
-// and whether that complies. Replaced as a set when the requisition is saved;
-// `sequence` is the Sr# shown on screen.
+// One compliance item of a requisition. The buyer writes the requirement; the
+// vendor's response, Compliant and Remarks are filled in by the vendor in the
+// Request for Quotation (read-only on the requisition). Replaced as a set when
+// the requisition is saved; `sequence` is the Sr# shown on screen.
 @Entity('material_requisition_compliances')
 @Index('IDX_mrc_requisition', ['requisitionId', 'sequence'])
 export class MaterialRequisitionCompliance {
@@ -28,13 +29,15 @@ export class MaterialRequisitionCompliance {
   @Column({ type: 'text' })
   requirement: string;
 
-  @Column({ type: 'text' })
-  vendorResponse: string;
+  // Filled in by the vendor (RFQ).
+  @Column({ type: 'text', nullable: true })
+  vendorResponse: string | null;
 
+  // Filled in by the vendor (RFQ).
   @Column({ default: false })
   compliant: boolean;
 
-  // Required when not compliant: why it is still acceptable, or what follows.
+  // Filled in by the vendor (RFQ).
   @Column({ type: 'text', nullable: true })
   remarks: string | null;
 

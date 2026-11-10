@@ -61,28 +61,34 @@ export class RequisitionDocumentDto {
   fileSizeBytes?: number | null;
 }
 
-/** One compliance item. Remarks are required when it is not compliant. */
+/**
+ * One compliance item. The buyer writes the requirement (required). The vendor's
+ * response, Compliant and Remarks are filled in by the vendor in the RFQ; the
+ * requisition sends them back unchanged so a save never loses them.
+ */
 export class RequisitionComplianceDto {
   @ApiProperty({ example: 'Material to ASTM A106 Gr. B, seamless' })
   @IsString() @IsNotEmpty({ message: 'Requirement is required' }) @MaxLength(2000)
   requirement: string;
 
-  @ApiProperty({ example: 'Confirmed, mill certificates 3.1 provided' })
-  @IsString() @IsNotEmpty({ message: 'Vendor response is required' }) @MaxLength(2000)
-  vendorResponse: string;
+  @ApiPropertyOptional({ nullable: true, description: 'Vendor (RFQ)' })
+  @IsOptional() @IsString() @MaxLength(2000)
+  vendorResponse?: string | null;
 
-  @ApiPropertyOptional({ default: false })
+  @ApiPropertyOptional({ default: false, description: 'Vendor (RFQ)' })
   @IsOptional() @IsBoolean()
   compliant?: boolean;
 
-  @ApiPropertyOptional({ nullable: true, description: 'Required when compliant is false' })
-  @ValidateIf((o: RequisitionComplianceDto) => !o.compliant)
-  @IsString() @IsNotEmpty({ message: 'Remarks are required when the item is not compliant' })
-  @MaxLength(2000)
+  @ApiPropertyOptional({ nullable: true, description: 'Vendor (RFQ)' })
+  @IsOptional() @IsString() @MaxLength(2000)
   remarks?: string | null;
 }
 
-/** One deviation item. Justification is required when Vendor Deviation is not ticked. */
+/**
+ * One deviation item — entered by the vendor in the RFQ (not accepted by the
+ * requisition's create / update). Justification is required when Vendor
+ * Deviation is not ticked.
+ */
 export class RequisitionDeviationDto {
   @ApiProperty({ example: '4.2.1' })
   @IsString() @IsNotEmpty({ message: 'Clause No. is required' }) @MaxLength(50)
@@ -183,12 +189,6 @@ export class CreateMaterialRequisitionDto {
   @IsOptional() @IsArray() @ArrayMaxSize(500) @ValidateNested({ each: true }) @Type(() => RequisitionComplianceDto)
   compliances?: RequisitionComplianceDto[];
 
-  @ApiPropertyOptional({
-    type: [RequisitionDeviationDto],
-    description: 'The complete set of deviation items, in Sr# order; the stored items are replaced by it.',
-  })
-  @IsOptional() @IsArray() @ArrayMaxSize(500) @ValidateNested({ each: true }) @Type(() => RequisitionDeviationDto)
-  deviations?: RequisitionDeviationDto[];
 
   @ApiPropertyOptional({
     default: false,

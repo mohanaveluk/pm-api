@@ -38,6 +38,10 @@ export class WbsCostCode {
   @Column({ length: 255 })
   projectDetails: string;
 
+  // A few words on what the WBS covers, shown beside its name.
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  shortDescription: string | null;
+
   // The project this entry belongs to. Held by id only: the project's number,
   // name and client are read through the relationship. Nullable because entries
   // created before projects existed have none.

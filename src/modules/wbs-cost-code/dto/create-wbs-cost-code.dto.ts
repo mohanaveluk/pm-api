@@ -26,6 +26,12 @@ export class CreateWbsCostCodeDto {
   @IsUUID()
   projectId: string;
 
+  @ApiPropertyOptional({ example: 'Foundations and civil works for the process plant', nullable: true })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  shortDescription?: string | null;
+
   @ApiPropertyOptional({ example: 'Process Area 1', nullable: true })
   @IsOptional()
   @IsString()

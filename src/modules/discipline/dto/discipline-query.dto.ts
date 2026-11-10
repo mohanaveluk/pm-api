@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
 export class DisciplineQueryDto {
@@ -7,6 +7,11 @@ export class DisciplineQueryDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @ApiPropertyOptional({ description: 'Only the disciplines of this department' })
+  @IsOptional()
+  @IsUUID()
+  departmentId?: string;
 
   @ApiPropertyOptional({ description: 'Filter by active status' })
   @IsOptional()
