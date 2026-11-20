@@ -10,6 +10,7 @@ import { memoryStorage } from 'multer';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { RolesGuard } from 'src/common/guards/roles.guard';
 import { Roles } from 'src/common/decorators/roles.decorator';
+import { InternalOnly } from 'src/common/decorators/internal-only.decorator';
 import { ResponseDto } from 'src/common/dto/response.dto';
 import { MaterialRequisitionService } from './material-requisition.service';
 import { CreateMaterialRequisitionDto } from './dto/create-material-requisition.dto';
@@ -62,6 +63,8 @@ const bomFileBody = {
 @ApiTags('Material Requisitions')
 @ApiBearerAuth('JWT-auth')
 @UseGuards(JwtAuthGuard, RolesGuard)
+// Company users only — reviewers and approvers are internal; vendors never reach requisitions.
+@InternalOnly()
 @Controller('material-requisitions')
 export class MaterialRequisitionController {
   constructor(

@@ -39,6 +39,7 @@ import { ClientTypeModule } from './modules/client-type/client-type.module';
 import { ClientModule } from './modules/client/client.module';
 import { ProjectModule } from './modules/project/project.module';
 import { MaterialRequisitionModule } from './modules/material-requisition/material-requisition.module';
+import { RfqModule } from './modules/request-for-quotation/rfq.module';
 import { WorkflowTrackingModule } from './modules/workflow-tracking/workflow-tracking.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { MaterialGroupModule } from './modules/material-group/material-group.module';
@@ -92,6 +93,7 @@ import { User } from './modules/user/entity/user.entity';
     ClientModule,
     ProjectModule,
     MaterialRequisitionModule,
+    RfqModule,
     WorkflowTrackingModule,
     NotificationModule,
     MaterialGroupModule,

@@ -20,6 +20,7 @@ export enum MasterSequenceKey {
   CLIENT              = 'CLIENT',
   PROJECT             = 'PROJECT',
   MATERIAL_REQUISITION = 'MATERIAL_REQUISITION',
+  RFQ                 = 'RFQ',
 }
 
 // Codes are zero-padded to this width: 0001, 0002, … Sequences beyond 9999
