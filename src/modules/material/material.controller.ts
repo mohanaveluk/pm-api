@@ -41,7 +41,7 @@ export class MaterialController {
   // ── Static routes first (must precede /:id) ───────────────────────────
 
   @Get('active')
-  @Roles('admin', 'manager', 'user')
+  @Roles('admin', 'manager', 'user', 'external_user')
   @ApiOperation({ summary: 'Get active materials for dropdown/lookup' })
   @ApiQuery({ name: 'materialCategoryId', required: false })
   @ApiQuery({ name: 'materialGroupId',    required: false })
@@ -62,7 +62,7 @@ export class MaterialController {
   // ── Collection routes ─────────────────────────────────────────────────
 
   @Post()
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager', 'external_user')
   @ApiOperation({ summary: 'Create a new material (code is auto-generated)' })
   @ApiResponse({ status: 201, description: 'Material created' })
   async create(@Body() dto: CreateMaterialDto, @Request() req) {
@@ -71,7 +71,7 @@ export class MaterialController {
   }
 
   @Get()
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager', 'external_user')
   @ApiOperation({ summary: 'List materials with filters and pagination' })
   @ApiResponse({ status: 200, description: 'Paginated material list' })
   async findAll(@Query() query: MaterialQueryDto, @Request() req) {
@@ -82,7 +82,7 @@ export class MaterialController {
   // ── Item routes ───────────────────────────────────────────────────────
 
   @Get(':id')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager', 'external_user')
   @ApiOperation({ summary: 'Get a single material by ID' })
   @ApiParam({ name: 'id', description: 'Material UUID' })
   @ApiResponse({ status: 200, description: 'Material detail' })
@@ -98,7 +98,7 @@ export class MaterialController {
   // mutation that survives the purchase-order lock.
 
   @Get(':id/documents')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager', 'user')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager', 'user', 'external_user')
   @ApiOperation({
     summary: 'List a material\'s documents',
     description:
@@ -118,7 +118,7 @@ export class MaterialController {
   }
 
   @Post(':id/documents')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager', 'external_user')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Add a document to a material (allowed even when PO-locked)',
@@ -150,7 +150,7 @@ export class MaterialController {
   }
 
   @Delete(':id/documents/:documentId')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager', 'external_user')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Soft-delete a material document',
@@ -183,7 +183,7 @@ export class MaterialController {
   // ── Purchase-order lock ───────────────────────────────────────────────
 
   @Patch(':id/purchase-order-issued')
-  @Roles('OrganizationAdmin', 'SuperAdmin')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'external_user')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Mark a material as locked by an issued purchase order',
@@ -212,7 +212,7 @@ export class MaterialController {
   }
 
   @Post(':id/clone')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager', 'external_user')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Clone an existing material',
@@ -233,7 +233,7 @@ export class MaterialController {
   }
 
   @Put(':id')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager', 'external_user')
   @ApiOperation({
     summary: 'Update material (all sections)',
     description:
@@ -252,7 +252,7 @@ export class MaterialController {
   }
 
   @Patch(':id/enable')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager', 'external_user')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Set material status to ACTIVE' })
   @ApiParam({ name: 'id', description: 'Material UUID' })
@@ -262,7 +262,7 @@ export class MaterialController {
   }
 
   @Patch(':id/disable')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager', 'external_user')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Set material status to INACTIVE' })
   @ApiParam({ name: 'id', description: 'Material UUID' })
@@ -272,7 +272,7 @@ export class MaterialController {
   }
 
   @Patch(':id/obsolete')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager', 'external_user')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Set material status to OBSOLETE (end-of-life)' })
   @ApiParam({ name: 'id', description: 'Material UUID' })
@@ -282,7 +282,7 @@ export class MaterialController {
   }
 
   @Delete(':id')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager', 'external_user')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Soft-delete a material' })
   @ApiParam({ name: 'id', description: 'Material UUID' })
@@ -309,7 +309,7 @@ export class MaterialController {
   }
 
   @Post('import/preview')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager', 'external_user')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Dry-run an import: how many rows are new and how many match existing materials',
@@ -334,7 +334,7 @@ export class MaterialController {
   }
 
   @Post('import')
-  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager')
+  @Roles('OrganizationAdmin', 'SuperAdmin', 'Manager', 'external_user')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Bulk import materials from an .xlsx, .csv or .json file (max 5 MB)',

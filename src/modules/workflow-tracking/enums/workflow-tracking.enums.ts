@@ -46,6 +46,12 @@ export enum WorkflowAction {
   // Access given to / taken from users (project assignment).
   ASSIGNED       = 'ASSIGNED',
   UNASSIGNED     = 'UNASSIGNED',
+  // RFQ: sent to the vendor; the vendor's quotation submitted.
+  ISSUED         = 'ISSUED',
+  // RFQ Acknowledgement Form: the vendor will / will not participate.
+  ACKNOWLEDGED   = 'ACKNOWLEDGED',
+  DECLINED       = 'DECLINED',
+  QUOTED         = 'QUOTED',
   STATUS_CHANGED = 'STATUS_CHANGED',
   LOCKED         = 'LOCKED',
   NOTIFIED       = 'NOTIFIED',

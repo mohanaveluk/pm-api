@@ -101,6 +101,10 @@ const ACTION_PHRASES: Record<string, string> = {
   UNASSIGNED: 'revoked',
   STATUS_CHANGED: 'status changed',
   LOCKED: 'locked',
+  ISSUED: 'issued to the vendor',
+  QUOTED: 'responded to by the vendor',
+  ACKNOWLEDGED: 'acknowledged by the vendor',
+  DECLINED: 'declined by the vendor',
 };
 
 // A decision already notifies; the "round completed" step that accompanies it

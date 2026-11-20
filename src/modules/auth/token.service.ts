@@ -48,6 +48,8 @@ export class TokenService {
         username: user.first_name + ' ' + user.last_name,
         identity: user.position || user.first_name + ' ' + user.last_name, // Use major or organisation_name as identity
         roleName: user.role?.name,
+        is_internal: user.is_internal !== 0,
+        mobile: user.mobile ?? null,
         role_id: user.role_guid,
         organizationId: user.organizationId
       } 
